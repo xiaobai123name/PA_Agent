@@ -16,6 +16,22 @@ from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
+# Tokens in §9 / decision reasoning that justify trading on weak|invalid signal_bar.
+_EXPLICIT_S9_TRADABLE_TOKENS = (
+    "弱",
+    "瑕疵",
+    "激进",
+    "仍可",
+    "例外",
+    "次优",
+    "等待信号",
+    "无信号",
+    "挂单",
+    "计划型",
+    "接受",
+    "限价",
+)
+
 # ── Result types ──────────────────────────────────────────────────────────────
 
 @dataclass
@@ -705,9 +721,9 @@ class JsonValidator:
                 if seq is not None and _bar_by_seq(kline_frame, seq) is None:
                     errors.append(f"bar_analysis.{label}.bar K{seq} not found in current K-line frame")
 
-        if quality in ("weak", "invalid"):
+        if quality in ("weak", "invalid") and not planned_without_signal:
             reasons = _all_stage2_reasons(obj)
-            if not any(token in reasons for token in ("弱", "瑕疵", "激进", "仍可", "例外")):
+            if not any(token in reasons for token in _EXPLICIT_S9_TRADABLE_TOKENS):
                 errors.append(
                     "weak/invalid signal_bar requires explicit §9 reasoning for why the setup remains tradable"
                 )

@@ -300,11 +300,21 @@ def test_stage2_validator_accepts_planned_limit_without_signal_bar() -> None:
         "still_valid": True,
         "freshness": "pending",
     }
-    obj["decision_trace"][0]["reason"] = "接受该瑕疵，等待信号确认"
+    obj["decision_trace"] = [
+        {
+            "node_id": "9.0",
+            "question": "信号棒是否已经收盘且质量足够？",
+            "answer": "否",
+            "reason": "计划型限价单挂阻力区，尚无已收盘信号棒；接受次优入场，方向与空头背景一致",
+            "skipped": False,
+            "bar_range": "K3-K1",
+        },
+        *obj["decision_trace"],
+    ]
     result = validator.validate(
         "stage2",
         json.dumps(obj),
-        decision_stance="aggressive",
+        decision_stance="balanced",
         kline_frame=_frame(),
     )
     assert isinstance(result, Ok), f"Expected Ok, got {result}"

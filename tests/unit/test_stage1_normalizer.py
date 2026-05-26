@@ -16,6 +16,26 @@ def test_maps_recommended_strategy_files() -> None:
     assert out["strategy_files_needed"] == ["下跌通道分析识别.txt"]
 
 
+def test_repair_gate_23_neutral_answer_with_bearish_branch() -> None:
+    """Regression: answer=中性 but branch/direction bearish (model conflates enums)."""
+    raw = {**VALID_STAGE1, "direction": "bearish"}
+    raw["gate_trace"] = [
+        {
+            "node_id": "2.3",
+            "question": "当前方向是多头还是空头？",
+            "answer": "中性",
+            "branch": "bearish",
+            "reason": "波段高低点下移，判定为空头。",
+            "bar_range": "K10-K1",
+        }
+    ]
+    out = normalize_stage1(raw, normalization_mode="strict")
+    assert out["gate_trace"][0]["answer"] == "是"
+    assert out["gate_trace"][0]["branch"] == "bearish"
+    errs = validate_stage1_coherence(out)
+    assert not any("2.3 answer=中性" in e for e in errs)
+
+
 def test_normalizes_gate_2_3_directional_answer() -> None:
     raw = {**VALID_STAGE1}
     raw["gate_trace"] = [

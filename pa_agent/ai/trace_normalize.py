@@ -6,7 +6,7 @@ import logging
 import re
 from typing import Any
 
-from pa_agent.ai.coherence_checks import _CYCLE_BRANCH_ALIASES
+from pa_agent.ai.coherence_checks import _CYCLE_BRANCH_ALIASES, _normalize_direction_branch
 from pa_agent.ai.decision_tree import load_decision_tree
 
 _PROCEED_FINAL_TOKENS = (
@@ -560,6 +560,49 @@ def _repair_stage2_terminal(obj: dict[str, Any]) -> None:
         return
 
 
+def _infer_direction_from_reason(reason: str) -> str | None:
+    blob = (reason or "").lower()
+    if any(tok in blob for tok in ("空头", "bearish", "做空", "偏空")):
+        return "bearish"
+    if any(tok in blob for tok in ("多头", "bullish", "做多", "偏多")):
+        return "bullish"
+    if any(tok in blob for tok in ("中性", "震荡", "neutral", "横盘")):
+        return "neutral"
+    return None
+
+
+def _sync_gate_23_answer_with_direction(obj: dict[str, Any]) -> None:
+    """Node 2.3: answer 是/否/中性 encodes certainty; direction lives in branch."""
+    gate = obj.get("gate_trace")
+    if not isinstance(gate, list):
+        return
+    top_dir = _normalize_direction_branch(obj.get("direction"))
+    for item in gate:
+        if not isinstance(item, dict) or str(item.get("node_id", "")).strip() != "2.3":
+            continue
+        if item.get("skipped"):
+            return
+        ans = str(item.get("answer", "") or "").strip()
+        branch_dir = _normalize_direction_branch(item.get("branch"))
+        if not branch_dir:
+            branch_dir = _infer_direction_from_reason(str(item.get("reason", "") or ""))
+        if not branch_dir and top_dir:
+            branch_dir = top_dir
+        if branch_dir and not item.get("branch"):
+            item["branch"] = branch_dir
+
+        if branch_dir in ("bullish", "bearish"):
+            if ans == "中性":
+                item["answer"] = "是"
+                logger.debug(
+                    "gate_trace 2.3 answer 中性 -> 是 (branch=%s)", branch_dir
+                )
+        elif branch_dir == "neutral" and ans in ("是", "否"):
+            item["answer"] = "中性"
+            logger.debug("gate_trace 2.3 answer %s -> 中性 (branch=neutral)", ans)
+        return
+
+
 def _repair_stage1_gate_trace(obj: dict[str, Any]) -> None:
     """Format-only repairs so strict trace semantics pass on good-faith AI output."""
     gate = obj.get("gate_trace")
@@ -573,6 +616,8 @@ def _repair_stage1_gate_trace(obj: dict[str, Any]) -> None:
         nid = str(item.get("node_id", "") or "").strip()
         if nid in canonical_q:
             item["question"] = canonical_q[nid]
+
+    _sync_gate_23_answer_with_direction(obj)
 
     if str(obj.get("gate_result", "")).lower() == "proceed":
         last = gate[-1]
