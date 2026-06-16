@@ -298,7 +298,7 @@ class SettingsDialog(QDialog):
         )
         self._enable_next_bar_check.blockSignals(False)
         self._decision_conf_threshold_spin.setValue(
-            int(getattr(g, "decision_confidence_threshold", 60))
+            int(getattr(g, "decision_confidence_threshold", 40))
         )
         self._last_symbol_edit.setText(g.last_symbol)
         self._last_timeframe_edit.setText(g.last_timeframe)

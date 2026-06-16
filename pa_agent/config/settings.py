@@ -89,7 +89,7 @@ class GeneralSettings(BaseModel):
     #: 重试后取消持续跟踪分析：校验失败触发重试后自动关闭 keep_analysis
     cancel_keep_analysis_on_retry: bool = False
     #: 交易决策置信度门槛：仅当 trade_confidence >= 此值时，才视为有下单机会（弹窗警报并提供决策详情）
-    decision_confidence_threshold: int = Field(default=60, ge=0, le=100)
+    decision_confidence_threshold: int = Field(default=40, ge=0, le=100)
     #: 开启下根K线预期功能；关闭时不向模型请求该预测，节省 token
     enable_next_bar_prediction: bool = False
 
@@ -112,6 +112,29 @@ class GeneralSettings(BaseModel):
         return v
 
 
+_FEISHU_CONFIG_KEYS = (
+    "enabled",
+    "webhook_url",
+    "secret",
+    "app_id",
+    "app_secret",
+    "notify_on_order_only",
+)
+
+
+class FeishuSettings(BaseModel):
+    """Feishu bot notification settings (persisted in settings.json)."""
+    model_config = ConfigDict(extra="ignore")
+
+    enabled: bool = True
+    webhook_url: str = ""
+    secret: str = ""
+    app_id: str = ""
+    app_secret: str = ""
+    #: True = only push when there is an order opportunity.
+    notify_on_order_only: bool = True
+
+
 class Settings(BaseModel):
     """Root settings object persisted to config/settings.json."""
     model_config = ConfigDict(extra="ignore")
@@ -120,6 +143,7 @@ class Settings(BaseModel):
     general: GeneralSettings = Field(default_factory=GeneralSettings)
     prompt: PromptSettings = Field(default_factory=PromptSettings)
     validation: ValidationSettings = Field(default_factory=ValidationSettings)
+    feishu: FeishuSettings = Field(default_factory=FeishuSettings)
 
 
 def provider_api_key_configured(settings: Settings | None) -> bool:
@@ -135,6 +159,37 @@ import logging
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+def _migrate_legacy_feishu_json(raw: dict, settings_path: Path) -> bool:
+    """Merge legacy config/feishu.json into settings.feishu when needed."""
+    legacy_path = settings_path.parent / "feishu.json"
+    if not legacy_path.exists():
+        return False
+
+    feishu = raw.setdefault("feishu", {})
+    if (feishu.get("webhook_url") or "").strip():
+        return False
+
+    try:
+        legacy = json.loads(legacy_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("legacy feishu.json unreadable (%s); skipping migration", exc)
+        return False
+
+    migrated = False
+    for key in _FEISHU_CONFIG_KEYS:
+        if key not in legacy:
+            continue
+        value = legacy.get(key)
+        if value in (None, ""):
+            continue
+        if feishu.get(key) in (None, ""):
+            feishu[key] = value
+            migrated = True
+    if migrated:
+        logger.info("Migrated Feishu config from %s into settings.json", legacy_path)
+    return migrated
 
 
 def load_settings(path: Path | None = None) -> "Settings":
@@ -175,7 +230,11 @@ def load_settings(path: Path | None = None) -> "Settings":
     # Migrate legacy encrypted key: drop it, api_key already in provider dict
     raw.setdefault("provider", {}).setdefault("api_key", "")
 
-    return Settings.model_validate(raw)
+    migrated_feishu = _migrate_legacy_feishu_json(raw, path)
+    settings = Settings.model_validate(raw)
+    if migrated_feishu:
+        save_settings(settings, path)
+    return settings
 
 
 def save_settings(settings: "Settings", path: Path | None = None) -> None:

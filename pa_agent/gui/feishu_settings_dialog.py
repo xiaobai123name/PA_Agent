@@ -1,14 +1,16 @@
 """飞书机器人设置对话框.
 
-提供 GUI 界面填写和保存 config/feishu.json，无需手动编辑 JSON 文件。
+提供 GUI 界面填写并保存到 config/settings.json 的 feishu 段。
 包含：Webhook URL、签名密钥、企业自建应用 App ID / App Secret，
 以及启用/禁用开关，并带有一键发送测试消息功能。
 """
 from __future__ import annotations
 
-import json
+import base64
+import hashlib
+import hmac
 import logging
-from pathlib import Path
+import time
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
@@ -26,32 +28,18 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from pa_agent.config.paths import SETTINGS_JSON_PATH
+from pa_agent.config.settings import Settings, save_settings
+
 logger = logging.getLogger(__name__)
-
-_CONFIG_PATH = Path("config/feishu.json")
-
-
-def _load_feishu_config() -> dict:
-    if not _CONFIG_PATH.exists():
-        return {}
-    try:
-        return json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-
-def _save_feishu_config(cfg: dict) -> None:
-    _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    _CONFIG_PATH.write_text(
-        json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
 
 
 class FeishuSettingsDialog(QDialog):
     """填写飞书机器人 Webhook 等配置的模态对话框."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, settings: Settings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._settings = settings
         self.setWindowTitle("飞书机器人设置")
         self.setMinimumWidth(520)
         self._setup_ui()
@@ -173,26 +161,24 @@ class FeishuSettingsDialog(QDialog):
     # ── 加载 / 保存 ────────────────────────────────────────────────────────────
 
     def _load_values(self) -> None:
-        cfg = _load_feishu_config()
-        self._enabled_check.setChecked(bool(cfg.get("enabled", True)))
-        self._webhook_edit.setText(cfg.get("webhook_url", ""))
-        self._secret_edit.setText(cfg.get("secret", ""))
-        self._app_id_edit.setText(cfg.get("app_id", ""))
-        self._app_secret_edit.setText(cfg.get("app_secret", ""))
+        cfg = self._settings.feishu
+        self._enabled_check.setChecked(cfg.enabled)
+        self._webhook_edit.setText(cfg.webhook_url)
+        self._secret_edit.setText(cfg.secret)
+        self._app_id_edit.setText(cfg.app_id)
+        self._app_secret_edit.setText(cfg.app_secret)
 
-    def _collect_values(self) -> dict:
-        return {
-            "enabled": self._enabled_check.isChecked(),
-            "webhook_url": self._webhook_edit.text().strip(),
-            "secret": self._secret_edit.text().strip(),
-            "app_id": self._app_id_edit.text().strip(),
-            "app_secret": self._app_secret_edit.text().strip(),
-            "notify_on_order_only": True,
-        }
+    def _apply_values_to_settings(self) -> None:
+        feishu = self._settings.feishu
+        feishu.enabled = self._enabled_check.isChecked()
+        feishu.webhook_url = self._webhook_edit.text().strip()
+        feishu.secret = self._secret_edit.text().strip()
+        feishu.app_id = self._app_id_edit.text().strip()
+        feishu.app_secret = self._app_secret_edit.text().strip()
 
     def _on_save(self) -> None:
-        cfg = self._collect_values()
-        if cfg["enabled"] and not cfg["webhook_url"]:
+        self._apply_values_to_settings()
+        if self._settings.feishu.enabled and not self._settings.feishu.webhook_url:
             QMessageBox.warning(
                 self,
                 "配置不完整",
@@ -200,10 +186,14 @@ class FeishuSettingsDialog(QDialog):
             )
             return
         try:
-            _save_feishu_config(cfg)
+            save_settings(self._settings, SETTINGS_JSON_PATH)
             self.accept()
         except Exception as exc:
-            QMessageBox.critical(self, "保存失败", f"写入 config/feishu.json 失败：\n{exc}")
+            QMessageBox.critical(
+                self,
+                "保存失败",
+                f"写入 config/settings.json 失败：\n{exc}",
+            )
 
     # ── 显示 / 隐藏密钥 ───────────────────────────────────────────────────────
 
@@ -246,8 +236,7 @@ class FeishuSettingsDialog(QDialog):
 
     def _on_test(self) -> None:
         """用当前表单填写的值向飞书群发送测试文本消息."""
-        cfg = self._collect_values()
-        webhook_url = cfg.get("webhook_url", "").strip()
+        webhook_url = self._webhook_edit.text().strip()
         if not webhook_url:
             QMessageBox.warning(self, "缺少配置", "请先填写 Webhook URL 再测试。")
             return
@@ -262,16 +251,11 @@ class FeishuSettingsDialog(QDialog):
             )
             return
 
-        import time
-        import hashlib
-        import hmac
-        import base64
-
         payload: dict = {
             "msg_type": "text",
             "content": {"text": "✅ PA Agent 飞书通知测试消息，配置正常！"},
         }
-        secret = cfg.get("secret", "").strip()
+        secret = self._secret_edit.text().strip()
         if secret:
             ts = int(time.time())
             string_to_sign = f"{ts}\n{secret}"

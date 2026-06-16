@@ -35,5 +35,13 @@
     "trace_semantic_checks": true,
     "strict_bar_by_bar_features": true,
     "disable_truncation_repair": true
+  },
+  "feishu": {
+    "enabled": true,
+    "webhook_url": "",
+    "secret": "",
+    "app_id": "",
+    "app_secret": "",
+    "notify_on_order_only": true
   }
 }

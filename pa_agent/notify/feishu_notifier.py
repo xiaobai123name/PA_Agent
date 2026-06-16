@@ -12,8 +12,8 @@
 1. 在飞书群里添加"自定义机器人"，复制 Webhook URL。
 2. （可选）开启签名校验，复制 Secret。
 3. （图片功能）在飞书开放平台创建企业自建应用，申请 im:resource 权限，
-   获取 App ID 和 App Secret，填入 config/feishu.json。
-4. 创建 config/feishu.json，参考 config/feishu.example.json。
+   获取 App ID 和 App Secret，在设置中填写（保存到 config/settings.json）。
+4. 在程序菜单「飞书发送通知设置」中配置，或编辑 config/settings.json 的 feishu 段。
 
 飞书官方文档
 ------------
@@ -27,16 +27,16 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import json
 import logging
 import time
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pa_agent.config.settings import Settings
 
 logger = logging.getLogger(__name__)
-
-_CONFIG_PATH = Path("config/feishu.json")
 
 # ── 飞书 Open API 端点 ─────────────────────────────────────────────────────────
 _TOKEN_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
@@ -89,15 +89,14 @@ _token_cache = _TokenCache()
 
 
 # ── 配置加载 ──────────────────────────────────────────────────────────────────
-def _load_config() -> dict:
-    """从 config/feishu.json 加载配置；文件不存在则返回空 dict."""
-    if not _CONFIG_PATH.exists():
-        return {}
-    try:
-        return json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
-    except Exception as exc:
-        logger.warning("feishu.json 加载失败: %s", exc)
-        return {}
+def _feishu_config_dict(settings: "Settings | None" = None) -> dict[str, Any]:
+    """Load Feishu settings from settings.json (or an in-memory Settings object)."""
+    if settings is not None:
+        return settings.feishu.model_dump()
+    from pa_agent.config.paths import SETTINGS_JSON_PATH
+    from pa_agent.config.settings import load_settings
+
+    return load_settings(SETTINGS_JSON_PATH).feishu.model_dump()
 
 
 # ── 签名 ──────────────────────────────────────────────────────────────────────
@@ -297,6 +296,7 @@ def send_order_signal(
     symbol: str,
     timeframe: str,
     chart_image_path: str | Path | None = None,
+    settings: "Settings | None" = None,
 ) -> bool:
     """发送下单信号到飞书群.
 
@@ -311,25 +311,27 @@ def send_order_signal(
     timeframe:
         K线周期，如 "15m"。
     chart_image_path:
-        K线图表 PNG 的本地路径（可选）。需要 config/feishu.json 中配置
+        K线图表 PNG 的本地路径（可选）。需要在 settings.json 的 feishu 段配置
         app_id + app_secret 才能上传图片；未配置则仅发文字卡片。
+    settings:
+        可选的内存 Settings；未传时从 config/settings.json 读取。
 
     Returns
     -------
     bool
         发送成功返回 True，失败或未启用返回 False。
     """
-    cfg = _load_config()
+    cfg = _feishu_config_dict(settings)
 
     if not cfg.get("enabled", True):
-        logger.debug("飞书通知已禁用（config/feishu.json enabled=false）")
+        logger.debug("飞书通知已禁用（settings.json feishu.enabled=false）")
         return False
 
     webhook_url = (cfg.get("webhook_url") or "").strip()
     if not webhook_url:
         logger.warning(
-            "飞书通知：config/feishu.json 未配置 webhook_url，跳过推送。"
-            " 请参考 config/feishu.example.json 完成配置。"
+            "飞书通知：settings.json 未配置 feishu.webhook_url，跳过推送。"
+            " 请在菜单「飞书发送通知设置」中完成配置。"
         )
         return False
 

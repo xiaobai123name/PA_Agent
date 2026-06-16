@@ -3143,6 +3143,7 @@ class MainWindow(QMainWindow):
                         symbol=_meta_symbol,
                         timeframe=_meta_timeframe,
                         chart_image_path=_latest_img,
+                        settings=settings,
                     )
                 except Exception as _feishu_exc:  # noqa: BLE001
                     logger.warning("飞书通知失败（不影响主流程）: %s", _feishu_exc)
@@ -3908,8 +3909,13 @@ class MainWindow(QMainWindow):
     def _open_feishu_settings_dialog(self) -> None:
         """打开飞书机器人设置对话框."""
         from pa_agent.gui.feishu_settings_dialog import FeishuSettingsDialog
+        from pa_agent.config.settings import Settings
 
-        dlg = FeishuSettingsDialog(parent=self)
+        settings: Settings = self._ctx.settings  # type: ignore[assignment]
+        if settings is None:
+            settings = Settings()
+
+        dlg = FeishuSettingsDialog(settings=settings, parent=self)
         dlg.exec()
 
     def _open_general_settings_dialog(self) -> None:

@@ -204,7 +204,7 @@ class GeneralSettingsDialog(QDialog):
     def _load_values(self) -> None:
         g = self._settings.general
         self._decision_conf_threshold_spin.setValue(
-            int(getattr(g, "decision_confidence_threshold", 60))
+            int(getattr(g, "decision_confidence_threshold", 40))
         )
         stance = getattr(g, "decision_stance", "conservative")
         idx = self._decision_stance_combo.findData(stance)

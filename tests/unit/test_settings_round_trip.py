@@ -66,3 +66,43 @@ def test_missing_api_key_leaves_api_key_blank(tmp_path):
     p.write_text(json.dumps(data), encoding="utf-8")
     s = load_settings(p)
     assert s.provider.api_key == ""
+
+
+def test_feishu_round_trip(tmp_path):
+    """save → load preserves feishu settings."""
+    p = tmp_path / "settings.json"
+    original = Settings()
+    original.feishu.webhook_url = "https://example.com/hook"
+    original.feishu.secret = "sec"
+    original.feishu.app_id = "cli_test"
+    save_settings(original, p)
+    loaded = load_settings(p)
+    assert loaded.feishu.webhook_url == "https://example.com/hook"
+    assert loaded.feishu.secret == "sec"
+    assert loaded.feishu.app_id == "cli_test"
+
+
+def test_migrate_legacy_feishu_json(tmp_path):
+    """Legacy config/feishu.json is merged into settings.json on load."""
+    p = tmp_path / "settings.json"
+    legacy = tmp_path / "feishu.json"
+    save_settings(Settings(), p)
+    legacy.write_text(
+        json.dumps(
+            {
+                "enabled": True,
+                "webhook_url": "https://example.com/legacy-hook",
+                "secret": "legacy-secret",
+                "app_id": "cli_legacy",
+                "app_secret": "legacy-app-secret",
+                "notify_on_order_only": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    loaded = load_settings(p)
+    assert loaded.feishu.webhook_url == "https://example.com/legacy-hook"
+    assert loaded.feishu.secret == "legacy-secret"
+    assert loaded.feishu.app_id == "cli_legacy"
+    data = json.loads(p.read_text(encoding="utf-8"))
+    assert data["feishu"]["webhook_url"] == "https://example.com/legacy-hook"

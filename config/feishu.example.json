@@ -1,18 +1,11 @@
 {
-  "_comment": "飞书机器人通知配置。复制此文件为 feishu.json 并填写真实值。feishu.json 已加入 .gitignore，不会提交到仓库。",
+  "_comment": "飞书配置已合并到 config/settings.json 的 feishu 段。此文件仅作字段说明参考。",
+  "_comment2": "请在程序菜单「飞书发送通知设置」中填写，或编辑 settings.json。",
 
   "enabled": true,
-
   "webhook_url": "https://open.feishu.cn/open-apis/bot/v2/hook/你的机器人Token",
-
-  "_comment_secret": "可选：开启签名校验时填写，留空则不签名",
   "secret": "",
-
-  "_comment_app": "可选：填写企业自建应用的 App ID / App Secret 才能上传 K 线图表截图。",
-  "_comment_app2": "需要为应用申请 im:resource（上传及下载图片）权限。",
   "app_id": "",
   "app_secret": "",
-
-  "_comment_only": "true = 只在有下单机会时推送（限价单/突破单/市价单）；false = 每次分析完都推送",
   "notify_on_order_only": true
 }
