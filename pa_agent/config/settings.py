@@ -74,6 +74,8 @@ class GeneralSettings(BaseModel):
     #: 阶段二给出限价/突破/市价单时：警报音、弹窗，并自动切到「决策」页（跳过决策树可视化演示）
     alert_on_order_opportunity: bool = True
     incremental_max_new_bars: int = Field(default=10, ge=0, le=500)
+    #: When enabled, every analysis ignores prior records/trade CSV continuity.
+    independent_analysis_mode: bool = False
     #: 阶段二交易倾向：balanced=默认；conservative/aggressive 逐级调整下单意愿
     decision_stance: DecisionStance = "balanced"
     #: 决策树可视化：在「整图适配」基础上的缩放百分比（100=与适配一致；可任意放大，仅下限 10%）
@@ -236,6 +238,7 @@ def load_settings(path: Path | None = None) -> "Settings":
 
     # Migrate legacy field names
     general = raw.get("general", {})
+    original_general = dict(general)
     if "cost_warning_threshold_pct" in general and "context_warning_threshold_pct" not in general:
         general["context_warning_threshold_pct"] = general.pop("cost_warning_threshold_pct")
     general.pop("last_htf_text", None)
@@ -254,7 +257,7 @@ def load_settings(path: Path | None = None) -> "Settings":
 
     migrated_feishu = _migrate_legacy_feishu_json(raw, path)
     settings = Settings.model_validate(raw)
-    dirty = migrated_feishu
+    dirty = migrated_feishu or general != original_general
     if settings.pushplus.enabled and not settings.pushplus.token.strip():
         if not (os.environ.get("PUSHPLUS_TOKEN") or "").strip():
             settings.pushplus.enabled = False

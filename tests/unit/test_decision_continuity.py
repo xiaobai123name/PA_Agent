@@ -135,6 +135,71 @@ def test_render_prompt_mentions_neutral_ais():
     assert "做空" in block
 
 
+def test_build_continuity_context_ignore_previous_skips_record_and_csv():
+    previous = {
+        "meta": {"timestamp_local_iso": "2026-07-05T10:00:00.000"},
+        "stage2_decision": {
+            "decision": {
+                "order_direction": "\u505a\u7a7a",
+                "order_type": "\u9650\u4ef7\u5355",
+                "entry_price": 4196.79,
+                "stop_loss_price": 4200.0,
+            }
+        },
+    }
+    ctx = build_continuity_context(
+        frame=_frame(),
+        stage1_json={"direction": "bearish"},
+        previous_record=previous,
+        ignore_previous=True,
+    )
+    assert ctx["has_previous_plan"] is False
+    assert ctx["previous_decision"] == {}
+    assert ctx["previous_source"] == "ignored"
+
+
+def test_normalize_stage2_ignore_previous_context_skips_continuity_guard(monkeypatch):
+    from pa_agent.ai.stage2_normalizer import normalize_stage2
+
+    monkeypatch.setattr(
+        "pa_agent.ai.stage2_normalizer._coerce_decision_when_trade_metrics_fail",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "pa_agent.ai.decision_nodes.DecisionNodeEngine.apply_stage2",
+        staticmethod(lambda *args, **kwargs: None),
+    )
+
+    payload = {
+        "decision": {
+            "order_type": "\u9650\u4ef7\u5355",
+            "order_direction": "\u505a\u591a",
+            "entry_price": 4190.0,
+            "stop_loss_price": 4185.0,
+            "take_profit_price": 4196.0,
+            "reasoning": "test",
+        },
+        "terminal": {"outcome": "trade", "node_id": "11.2"},
+    }
+    stage1 = {
+        "direction": "neutral",
+        "gate_trace": [
+            {"node_id": "2.4", "answer": "\u662f", "branch": "AIS"},
+        ],
+    }
+
+    guarded = normalize_stage2(payload, kline_frame=_frame(), stage1_json=stage1)
+    independent = normalize_stage2(
+        payload,
+        kline_frame=_frame(),
+        stage1_json=stage1,
+        ignore_previous_context=True,
+    )
+
+    assert guarded["decision"]["order_type"] == "\u4e0d\u4e0b\u5355"
+    assert independent["decision"]["order_type"] == "\u9650\u4ef7\u5355"
+
+
 def test_audit_relation_flip_label():
     prev = {
         "record_time": "2026-06-22 22:49:07",

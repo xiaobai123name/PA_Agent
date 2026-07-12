@@ -1,10 +1,16 @@
 """Gold default symbol / exchange normalization."""
 from __future__ import annotations
 
+import pytest
+
 from pa_agent.data.market_defaults import (
+    BINANCE_DEFAULT_SYMBOL,
+    BINANCE_SUPPORTED_SYMBOLS,
     GOLD_MT5_SYMBOL,
     GOLD_TV_EXCHANGE,
     GOLD_TV_SYMBOL,
+    TV_CRYPTO_EXCHANGES,
+    TV_GOLD_SYMBOL_BY_EXCHANGE,
     ashare_tv_probe_order,
     infer_ashare_tv_exchange,
     is_partial_tv_symbol_input,
@@ -14,9 +20,11 @@ from pa_agent.data.market_defaults import (
     normalize_gold_tv_exchange,
     resolve_tv_gold_pair,
     resolve_tv_pair,
+    resolve_tv_fetch_pair,
     tv_auto_probe_plan,
     tv_forex_auto_probe_plan,
 )
+from pa_agent.data.tv_symbol_lookup import TvSymbolNotFoundError
 from pa_agent.data.tradingview import TV_EXCHANGE_PRESETS
 
 
@@ -42,7 +50,10 @@ def test_tv_forex_auto_probe_tries_all_forex_presets():
     assert exchanges == [
         ex
         for ex in TV_EXCHANGE_PRESETS
-        if ex and ex not in {"SSE", "SZSE", "HKEX"}
+        if ex
+        and ex not in {"SSE", "SZSE", "HKEX"}
+        and ex not in TV_CRYPTO_EXCHANGES
+        and ex in TV_GOLD_SYMBOL_BY_EXCHANGE
     ]
     assert ("OANDA", "XAUUSD") in plan
     assert ("TVC", "GOLD") in plan
@@ -125,3 +136,37 @@ def test_migrate_general_fixes_tvc_xauusd():
     migrate_general_gold_defaults(general)
     assert general["last_tradingview_exchange"] == "TVC"
     assert general["last_symbol"] == "GOLD"
+
+
+@pytest.mark.parametrize(
+    ("display_symbol", "feed_symbol"),
+    [
+        ("BTCUSDT", "BTCUSDT.P"),
+        ("ETHUSDT", "ETHUSDT.P"),
+        ("XAUUSDT", "XAUUSDT.P"),
+        ("QQQUSDT", "QQQUSDT.P"),
+    ],
+)
+def test_binance_symbols_resolve_to_perpetual_feed(display_symbol, feed_symbol):
+    assert resolve_tv_fetch_pair("BINANCE", display_symbol) == ("BINANCE", feed_symbol)
+    assert resolve_tv_fetch_pair("BINANCE", feed_symbol) == ("BINANCE", feed_symbol)
+
+
+def test_binance_catalog_is_exactly_four_clean_symbols():
+    assert BINANCE_SUPPORTED_SYMBOLS == ("BTCUSDT", "ETHUSDT", "XAUUSDT", "QQQUSDT")
+    assert BINANCE_DEFAULT_SYMBOL == "BTCUSDT"
+
+
+def test_binance_rejects_symbols_without_network_lookup():
+    with pytest.raises(TvSymbolNotFoundError, match="仅支持"):
+        resolve_tv_fetch_pair("BINANCE", "SOLUSDT")
+
+
+def test_migrate_invalid_binance_symbol_to_default():
+    general = {
+        "last_data_source": "tradingview",
+        "last_symbol": "SOLUSDT.P",
+        "last_tradingview_exchange": "BINANCE",
+    }
+    migrate_general_gold_defaults(general)
+    assert general["last_symbol"] == "BTCUSDT"

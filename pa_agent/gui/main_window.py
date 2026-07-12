@@ -254,12 +254,16 @@ class MainWindow(QMainWindow):
         self._demo_auto_next_armed = False
         self._demo_waiting_flow_playback = False
         self._startup_api_key_check_done = False
-        self._startup_tv_connectivity_check_done = False
         self._symbol_switch_timer: QTimer | None = None
         self._pending_symbol_switch: tuple[str, str] | None = None
         # RefreshLoop runs in its own QThread
         self._refresh_loop: Any = None
-        self._refresh_thread: QThread | None = None
+        self._refresh_loop_id: object | None = None
+        self._refresh_cancel_token: Any = None
+        self._refresh_restart_pending = False
+        self._refresh_circuit_open = False
+        self._close_pending = False
+        self._pending_analysis_fetch: tuple[str, str, int, bool] | None = None
         # Pre-create status bar so any early callbacks don't hit AttributeError.
         # _setup_ui() will replace this with the real QStatusBar instance.
         self._status_bar: QStatusBar = QStatusBar()
@@ -394,9 +398,6 @@ class MainWindow(QMainWindow):
         )
         ctrl_layout.addWidget(self._data_source_combo)
 
-        # TradingView exchange is forced to «auto» whenever the data source is TV.
-        # We still keep the field visible for clarity, but it is not user-editable.
-
         self._tv_exchange_label = QLabel("交易所:")
         self._tv_exchange_combo = QComboBox()
         self._tv_exchange_combo.setEditable(False)
@@ -425,6 +426,8 @@ class MainWindow(QMainWindow):
             "PEPPERSTONE": "PEPPERSTONE（外汇）",
             "FOREXCOM":  "FOREXCOM（外汇）",
             "FX":        "FX（外汇）",
+            "BINANCE":   "BINANCE（币安）",
+            "OKX":       "OKX（欧易）",
             "TVC":       "TVC（商品/指数）",
             "CAPITALCOM": "CAPITALCOM（商品/外汇）",
             "CBOT":      "CBOT（期货）",
@@ -455,10 +458,12 @@ class MainWindow(QMainWindow):
         ctrl_layout.addWidget(self._tv_exchange_label)
         ctrl_layout.addWidget(self._tv_exchange_combo)
 
-        # Symbol — editable combo (user can type any MT5 symbol)
+        # Symbol — editable combo with suggestions.
         ctrl_layout.addWidget(QLabel("品种:"))
         self._symbol_combo = QComboBox()
         self._symbol_combo.setEditable(True)
+        self._symbol_combo.setInsertPolicy(QComboBox.InsertPolicy.InsertAtTop)
+        self._symbol_combo.setMaxVisibleItems(18)
         self._symbol_combo.setCurrentText(_last_symbol)
         self._symbol_combo.setMinimumWidth(110)
         self._apply_data_source_symbol_placeholder()
@@ -667,9 +672,9 @@ class MainWindow(QMainWindow):
 
     def _start_refresh_loop(self) -> None:
         """Start the RefreshLoop only when the data source is connected."""
-        # Reap any zombie workers / loops before starting a fresh one
         self._reap_zombie_workers()
-        self._reap_zombie_loops()
+        if self._refresh_loop is not None:
+            return
 
         data_source = getattr(self._ctx, "data_source", None)
         if data_source is None:
@@ -694,41 +699,39 @@ class MainWindow(QMainWindow):
         if self._current_data_source_kind() in ("akshare", "eastmoney", "tushare") and interval_ms < 2500:
             interval_ms = 2500
 
+        self._refresh_circuit_open = False
         self._refresh_cancel_token = CancelToken()
-        self._refresh_loop = RefreshLoop(
+        loop = RefreshLoop(
             data_source=data_source,
             n_bars=n_bars,
             interval_ms=interval_ms,
             cancel_token=self._refresh_cancel_token,
         )
+        loop_id = object()
+        self._refresh_loop = loop
+        self._refresh_loop_id = loop_id
 
         # Wire RefreshLoop signals
-        self._refresh_loop.frame_ready.connect(self._on_refresh_frame_ready)
-        self._refresh_loop.status_changed.connect(self._on_status_update)
+        loop.frame_ready.connect(self._on_refresh_frame_ready)
+        loop.status_changed.connect(self._on_status_update)
+        loop.state_changed.connect(self._on_refresh_state_changed)
+        loop.finished.connect(
+            lambda current=loop, current_id=loop_id: self._on_refresh_loop_finished(
+                current, current_id
+            )
+        )
 
-        self._refresh_loop.start()
+        loop.start()
         logger.info("RefreshLoop started for %s %s",
                     getattr(data_source, "_symbol", "?"),
                     getattr(data_source, "_timeframe", "?"))
         self._update_symbol_data_alert()
 
     def _stop_refresh_loop(self) -> None:
-        """Stop the background RefreshLoop thread if running.
-
-        Disconnects signals before waiting so that a zombie loop's callbacks
-        cannot fire after the owning MainWindow has moved on (e.g. symbol/tf
-        switch, new worker started).
-
-        If the loop does not finish within ``_WORKER_JOIN_TIMEOUT_MS`` it is
-        tracked as a zombie.  Zombie loops are reaped later in
-        ``_reap_zombie_loops()`` so their QThread resources are eventually
-        freed.
-        """
+        """Request asynchronous stop; ``finished`` owns final cleanup."""
         loop = getattr(self, "_refresh_loop", None)
-        token = getattr(self, "_refresh_cancel_token", None)
         if loop is None:
             return
-        # Disconnect signals first to prevent zombie callbacks
         try:
             loop.frame_ready.disconnect(self._on_refresh_frame_ready)
         except (TypeError, RuntimeError):
@@ -737,41 +740,76 @@ class MainWindow(QMainWindow):
             loop.status_changed.disconnect(self._on_status_update)
         except (TypeError, RuntimeError):
             pass
-        if token is not None:
-            token.set()
-        # Actively close the live WebSocket so any blocked get_hist() recv()
-        # exits immediately instead of waiting out the full timeout.  This is
-        # the only reliable way to unblock the RefreshLoop thread before the
-        # join below.
-        data_source = getattr(self._ctx, "data_source", None)
-        if data_source is not None:
-            close_ws = getattr(data_source, "_close_tv_socket", None)
-            if callable(close_ws):
-                try:
-                    close_ws()
-                except Exception:  # noqa: BLE001
-                    pass
-        if loop.isRunning():
-            loop.wait(_WORKER_JOIN_TIMEOUT_MS)
-            if loop.isRunning():
-                # RefreshLoop is stuck in a blocking WebSocket call — it will
-                # eventually time out and check the cancel token, but until
-                # then we track it as a zombie so it can be reaped later.
-                logger.warning(
-                    "RefreshLoop did not finish within %d ms; tracking as zombie",
-                    _WORKER_JOIN_TIMEOUT_MS,
-                )
-                zombies = getattr(self, "_zombie_loops", None)
-                if zombies is None:
-                    zombies = []
-                    self._zombie_loops = zombies
-                zombies.append(loop)
-            else:
-                loop.deleteLater()
-        else:
+        try:
+            loop.state_changed.disconnect(self._on_refresh_state_changed)
+        except (TypeError, RuntimeError):
+            pass
+        self._fetch_data_btn.setText("停止中…")
+        self._fetch_data_btn.setEnabled(False)
+        loop.request_stop()
+
+    def _restart_refresh_loop(self) -> None:
+        """Coalesce all restart requests behind the current loop's shutdown."""
+        self._refresh_restart_pending = True
+        if self._refresh_loop is not None:
+            self._stop_refresh_loop()
+            return
+        self._refresh_restart_pending = False
+        self._start_refresh_loop()
+
+    def _on_refresh_loop_finished(self, loop: Any, loop_id: object) -> None:
+        if self._refresh_loop_id is not loop_id:
             loop.deleteLater()
+            return
         self._refresh_loop = None
+        self._refresh_loop_id = None
         self._refresh_cancel_token = None
+        loop.deleteLater()
+        if self._window_closing:
+            self._disconnect_data_source(getattr(self._ctx, "data_source", None))
+            self._close_pending = False
+            QTimer.singleShot(0, self.close)
+            return
+        if self._refresh_restart_pending:
+            self._refresh_restart_pending = False
+            self._start_refresh_loop()
+            return
+        if not self._refresh_circuit_open:
+            self._fetch_data_btn.setText("获取数据")
+            self._fetch_data_btn.setEnabled(True)
+
+    def _on_refresh_state_changed(self, status: Any) -> None:
+        from pa_agent.data.refresh_loop import RefreshPhase
+
+        phase = getattr(status, "phase", None)
+        message = str(getattr(status, "message", "") or "")
+        flow = getattr(self, "_flow_bar", None)
+        if phase == RefreshPhase.CONNECTING:
+            self._fetch_data_btn.setText("连接中…")
+            self._fetch_data_btn.setEnabled(False)
+            if flow is not None:
+                flow.set_step_status(0, "active")
+                flow.set_step_caption(0, message)
+        elif phase == RefreshPhase.RETRY_WAIT:
+            self._fetch_data_btn.setText("连接中…")
+            self._fetch_data_btn.setEnabled(False)
+            if flow is not None:
+                flow.set_step_status(0, "active")
+                flow.set_step_caption(0, message)
+        elif phase == RefreshPhase.LIVE:
+            self._refresh_circuit_open = False
+            self._fetch_data_btn.setText("获取数据")
+            self._fetch_data_btn.setEnabled(False)
+            if flow is not None and not self._analysis_in_progress:
+                flow.set_step_status(0, "done")
+                flow.set_step_caption(0, "已就绪")
+        elif phase == RefreshPhase.CIRCUIT_OPEN:
+            self._refresh_circuit_open = True
+            self._fetch_data_btn.setText("重试")
+            self._fetch_data_btn.setEnabled(True)
+            if flow is not None:
+                flow.set_step_status(0, "error")
+                flow.set_step_caption(0, message)
 
     def _ui_is_alive(self) -> bool:
         """True while MainWindow (and its widgets) can still be touched from slots."""
@@ -849,7 +887,7 @@ class MainWindow(QMainWindow):
         if worker.isRunning():
             logger.info(
                 "Analysis worker still running after %d ms cancel wait; "
-                "tracking as zombie",
+                "later callbacks will be ignored",
                 _WORKER_JOIN_TIMEOUT_MS,
             )
             zombies = getattr(self, "_zombie_workers", None)
@@ -859,47 +897,6 @@ class MainWindow(QMainWindow):
             zombies.append(worker)
         else:
             worker.deleteLater()
-
-    def _cancel_snapshot_fetch_worker(self) -> None:
-        """Cancel any running SnapshotFetchWorker and nullify its reference.
-
-        Uses a generation-based invalidation: the callback closures check
-        ``_snapshot_fetch_id`` before acting, so stale workers that finish
-        after cancellation are silently ignored.
-        """
-        sfw = getattr(self, "_snapshot_fetch_worker", None)
-        if sfw is not None:
-            # Invalidate the fetch generation so stale callbacks are no-ops
-            self._snapshot_fetch_id = None
-            self._snapshot_fetch_worker = None
-            if sfw.isRunning():
-                sfw.wait(_WORKER_JOIN_TIMEOUT_MS)
-                if sfw.isRunning():
-                    logger.warning(
-                        "SnapshotFetchWorker did not finish within %d ms; "
-                        "it will eventually finish but results will be ignored",
-                        _WORKER_JOIN_TIMEOUT_MS,
-                    )
-
-    def _reap_zombie_loops(self) -> None:
-        """Join any zombie RefreshLoops that have finished since last check.
-
-        Called periodically (e.g. from ``_on_worker_done``) to free QThread
-        resources that were stranded when ``_stop_refresh_loop`` timed out.
-        """
-        zombies = getattr(self, "_zombie_loops", None)
-        if not zombies:
-            return
-        still_alive: list = []
-        for loop in zombies:
-            if loop.isRunning():
-                still_alive.append(loop)
-            else:
-                loop.deleteLater()
-        if still_alive:
-            self._zombie_loops = still_alive
-        else:
-            self._zombie_loops = []
 
     def _disconnect_data_source(self, data_source: Any) -> None:
         if data_source is None:
@@ -1014,8 +1011,8 @@ class MainWindow(QMainWindow):
             return
         from pa_agent.data.market_defaults import is_partial_tv_symbol_input
 
-        sym_raw = self._symbol_combo.currentText().strip()
-        if is_partial_tv_symbol_input(sym_raw):
+        current_symbol = self._symbol_combo.currentText().strip()
+        if is_partial_tv_symbol_input(current_symbol):
             return
         ex_val = self._tv_exchange_text()
         logger.info("TV exchange changed → %r (raw combo data=%r)",
@@ -1023,12 +1020,15 @@ class MainWindow(QMainWindow):
         self._persist_tradingview_exchange()
         data_source = getattr(self._ctx, "data_source", None)
         self._apply_tv_exchange_to_source(data_source)
+        self._populate_symbol_combo_for_source()
+        sym_raw = self._symbol_combo.currentText().strip()
+        self._persist_last_symbol_settings(sym_raw, self._tf_combo.currentText())
         # Stop any running refresh and immediately restart so the new exchange
         # takes effect without requiring the user to click "获取数据" again.
-        self._stop_refresh_loop()
         timeframe = self._tf_combo.currentText()
         ex_show = ex_val or "自动"
         if data_source is not None and getattr(data_source, "_connected", False):
+            self._stop_refresh_loop()
             try:
                 data_source.unsubscribe()
                 data_source.subscribe(sym_raw, timeframe)
@@ -1039,7 +1039,7 @@ class MainWindow(QMainWindow):
                 logger.warning("TV resubscribe after exchange change: %s", exc)
                 self._status_bar.showMessage(f"订阅失败：{exc}")
             else:
-                self._start_refresh_loop()
+                self._restart_refresh_loop()
 
     def _apply_data_source_symbol_placeholder(self) -> None:
         line = self._symbol_combo.lineEdit()
@@ -1058,12 +1058,20 @@ class MainWindow(QMainWindow):
     def _populate_symbol_combo_for_source(self) -> None:
         """Refresh symbol suggestions for the active data source."""
         from pa_agent.data.factory import default_symbol_for_kind
+        from pa_agent.data.market_defaults import normalize_binance_display_symbol
 
         data_source = getattr(self._ctx, "data_source", None)
         current = self._symbol_combo.currentText().strip()
         kind = self._current_data_source_kind()
+        binance_locked = (
+            kind == "tradingview" and self._tv_exchange_text() == "BINANCE"
+        )
+        if binance_locked:
+            current = normalize_binance_display_symbol(current)
         symbols: list[str] = []
-        if data_source is not None and getattr(data_source, "_connected", False):
+        if data_source is not None and (
+            kind == "tradingview" or getattr(data_source, "_connected", False)
+        ):
             try:
                 symbols = list(data_source.list_symbols())
             except Exception as exc:  # noqa: BLE001
@@ -1071,12 +1079,19 @@ class MainWindow(QMainWindow):
 
         self._symbol_combo.blockSignals(True)
         self._symbol_combo.clear()
+        self._symbol_combo.setEditable(not binance_locked)
         if symbols:
             cap = 80 if kind == "mt5" else len(symbols)
             self._symbol_combo.addItems(symbols[:cap])
-        if current:
+        if current and not binance_locked:
             if self._symbol_combo.findText(current) < 0:
                 self._symbol_combo.addItem(current)
+            self._symbol_combo.setCurrentText(current)
+        elif binance_locked:
+            if self._symbol_combo.findText(current) < 0:
+                raise RuntimeError(
+                    f"BINANCE symbol catalog is missing normalized symbol {current!r}"
+                )
             self._symbol_combo.setCurrentText(current)
         else:
             default = default_symbol_for_kind(kind)
@@ -1085,6 +1100,19 @@ class MainWindow(QMainWindow):
             self._symbol_combo.setCurrentText(default)
         self._symbol_combo.blockSignals(False)
         self._apply_data_source_symbol_placeholder()
+
+    def _persist_last_symbol_settings(self, symbol: str, timeframe: str) -> None:
+        settings = getattr(self._ctx, "settings", None)
+        if settings is None:
+            return
+        settings.general.last_symbol = symbol
+        settings.general.last_timeframe = timeframe
+        try:
+            from pa_agent.config.settings import save_settings
+
+            save_settings(settings)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Failed to persist symbol/timeframe: %s", exc)
 
     def _populate_timeframe_combo_for_source(self) -> None:
         data_source = getattr(self._ctx, "data_source", None)
@@ -1110,10 +1138,6 @@ class MainWindow(QMainWindow):
                 self._tf_combo.setCurrentText(items[0])
         self._tf_combo.blockSignals(False)
 
-    def _ensure_tradingview_reachable(self) -> bool:
-        """Always allow switching to TV; connectivity is checked on-demand when user clicks '获取数据'."""
-        return True
-
     def _select_data_source_kind(self, kind: str, *, switch: bool) -> None:
         """Set data-source combo to *kind*; optionally run full switch."""
         idx = self._data_source_combo.findData(kind)
@@ -1138,8 +1162,6 @@ class MainWindow(QMainWindow):
         if kind == self._current_data_source_kind():
             return
         prev_index = self._data_source_combo.findData(self._current_data_source_kind())
-        if kind == "tradingview" and not self._ensure_tradingview_reachable():
-            return
         try:
             self._switch_data_source(kind)
         except Exception as exc:  # noqa: BLE001
@@ -1194,6 +1216,13 @@ class MainWindow(QMainWindow):
                     self._tv_exchange_combo.blockSignals(False)
 
             symbol = self._symbol_combo.currentText().strip()
+            if kind == "tradingview" and self._tv_exchange_text() == "BINANCE":
+                from pa_agent.data.market_defaults import normalize_binance_display_symbol
+
+                symbol = normalize_binance_display_symbol(symbol)
+                self._symbol_combo.blockSignals(True)
+                self._symbol_combo.setCurrentText(symbol)
+                self._symbol_combo.blockSignals(False)
             timeframe = self._tf_combo.currentText()
 
             new_source = create_data_source(kind)
@@ -1419,26 +1448,8 @@ class MainWindow(QMainWindow):
             self._on_symbol_or_tf_changed(new_symbol, new_tf)
             return
 
-        # For TradingView, probe connectivity on-demand (not at startup)
-        if self._current_data_source_kind() == "tradingview":
-            from pa_agent.data.tradingview_connectivity import check_tradingview_connectivity
-            ok, detail = check_tradingview_connectivity()
-            if not ok:
-                if detail:
-                    logger.info("TradingView unreachable: %s", detail)
-                from pa_agent.gui.tv_connectivity_dialog import show_tv_connectivity_blocked_dialog
-                choice = show_tv_connectivity_blocked_dialog(self)
-                if choice == "mt5":
-                    self._select_data_source_kind("mt5", switch=True)
-                return
-            # Brief pause to let the probe's WebSocket fully disconnect before
-            # the refresh loop opens its own connection (avoids TV rate-limiting)
-            import time as _time
-            _time.sleep(1.5)
-        # Stop any existing loop first so we can start fresh
-        self._stop_refresh_loop()
         self._set_chart_refresh_paused(False)
-        self._start_refresh_loop()
+        self._restart_refresh_loop()
 
     def _ensure_refresh_loop_running(self) -> None:
         """Start data fetch automatically if RefreshLoop is not already running.
@@ -1461,9 +1472,8 @@ class MainWindow(QMainWindow):
             )
             return  # no data source — can't start
         logger.info("Auto-starting RefreshLoop triggered by checkbox enable")
-        self._stop_refresh_loop()
         self._set_chart_refresh_paused(False)
-        self._start_refresh_loop()
+        self._restart_refresh_loop()
 
     def _on_fit_chart(self) -> None:
         """Auto-fit chart view to show recent bars with proper price range."""
@@ -1673,6 +1683,20 @@ class MainWindow(QMainWindow):
                 flow.set_step_status(0, "done")
                 flow.set_step_caption(0, "已就绪")
 
+        pending_fetch = self._pending_analysis_fetch
+        if pending_fetch is not None and bars:
+            symbol, timeframe, bar_count, force_incremental = pending_fetch
+            if self._bars_sufficient_for_analysis(bars, bar_count):
+                self._pending_analysis_fetch = None
+                self._status_bar.showMessage("首次拉取完成，开始准备分析…")
+                self._start_analysis_with_bars(
+                    symbol,
+                    timeframe,
+                    bar_count,
+                    bars,
+                    force_incremental=force_incremental,
+                )
+
         if self._pending_submit_after_close and bars:
             self._check_pending_bar_close(bars)
 
@@ -1691,8 +1715,10 @@ class MainWindow(QMainWindow):
             if not (keep_analysis_on and self._pending_submit_after_close):
                 return
 
-        # Auto-incremental: if a switch set the pending flag, trigger now
-        if self._auto_incremental_pending and bars:
+        # Auto-incremental: if a switch set the pending flag, trigger now.
+        if self._independent_analysis_enabled():
+            self._auto_incremental_pending = False
+        elif self._auto_incremental_pending and bars:
             self._auto_incremental_pending = False
             symbol = self._symbol_combo.currentText().strip()
             tf = self._tf_combo.currentText()
@@ -1760,12 +1786,10 @@ class MainWindow(QMainWindow):
 
         self._clear_pending_bar_close_wait()
 
-        # Cancel any running SnapshotFetchWorker so its stale callbacks don't
-        # fire after we've already changed symbol/tf (would corrupt state).
-        self._cancel_snapshot_fetch_worker()
-
-        # Stop any running refresh — user must click "获取数据" to re-fetch
+        # Stop any running refresh before changing the subscription.  The
+        # pending restart is coalesced behind the loop's finished signal.
         self._stop_refresh_loop()
+        self._pending_analysis_fetch = None
 
         from pa_agent.data.market_defaults import is_partial_tv_symbol_input
 
@@ -1883,7 +1907,7 @@ class MainWindow(QMainWindow):
             # "获取数据" again.
             data_source = getattr(self._ctx, "data_source", None)
             if data_source is not None and getattr(data_source, "_connected", False):
-                self._start_refresh_loop()
+                self._restart_refresh_loop()
 
             # Check for prior analysis record — if found, show a hint in the
             # status bar but do NOT auto-trigger analysis; the user decides
@@ -1898,6 +1922,8 @@ class MainWindow(QMainWindow):
         """After a symbol/tf switch, look for a prior record and set the
         auto-incremental flag so analysis triggers once bars are available."""
         self._auto_incremental_pending = False
+        if self._independent_analysis_enabled():
+            return
 
         settings = getattr(self._ctx, "settings", None)
         threshold = int(
@@ -2671,12 +2697,16 @@ class MainWindow(QMainWindow):
 
     def _on_submit_incremental_analysis(self) -> None:
         """Handle the '增量分析' button click — always try incremental mode."""
+        if self._independent_analysis_enabled():
+            self._status_bar.showMessage("独立分析模式已开启，本次按完整独立分析提交")
         self._begin_submit_analysis(force_incremental=True)
 
     def _begin_submit_analysis(self, *, force_incremental: bool) -> None:
         """Shared entry for normal and forced-incremental submit buttons."""
         if not self._can_submit():
             return
+        if self._independent_analysis_enabled():
+            force_incremental = False
 
         # Clear auto-incremental flag — user initiated analysis manually
         self._auto_incremental_pending = False
@@ -2757,59 +2787,15 @@ class MainWindow(QMainWindow):
         *,
         force_incremental: bool = False,
     ) -> None:
-        """Fetch K-lines on a worker thread when no RefreshLoop snapshot is cached yet."""
+        """Suspend analysis until the single RefreshLoop delivers its first frame."""
         data_source = getattr(self._ctx, "data_source", None)
         if data_source is None or not getattr(data_source, "_connected", False):
             self._status_bar.showMessage("数据源未连接")
             return
-
-        # Cancel any previous worker (belt-and-suspenders; normally cleaned
-        # up by _on_worker_done, but a rapid re-trigger could race).
-        self._cancel_snapshot_fetch_worker()
-
-        from pa_agent.gui.snapshot_worker import SnapshotFetchWorker
-
-        self._status_bar.showMessage("正在后台获取K线…")
-        from pa_agent.data.snapshot import INDICATOR_WARMUP_BARS
-
-        worker = SnapshotFetchWorker(
-            data_source, bar_count + INDICATOR_WARMUP_BARS + 5, parent=None
-        )
-        # Use a generation token so that stale callbacks from a cancelled
-        # worker are silently ignored (closures can't easily be disconnected).
-        fetch_id = object()
-        self._snapshot_fetch_id = fetch_id
-        self._snapshot_fetch_worker = worker
-
-        def _on_bars(bars: list) -> None:
-            if getattr(self, "_snapshot_fetch_id", None) is not fetch_id:
-                return  # stale fetch — ignore
-            if not _qobject_alive(self):
-                return
-            self._snapshot_fetch_worker = None
-            if not self._bars_sufficient_for_analysis(bars, bar_count):
-                self._status_bar.showMessage("数据不足，请等待图表刷新后再提交")
-                return
-            self._last_frame_ready_bars = list(bars)
-            self._start_analysis_with_bars(
-                symbol,
-                timeframe,
-                bar_count,
-                bars,
-                force_incremental=force_incremental,
-            )
-
-        def _on_fail(msg: str) -> None:
-            if getattr(self, "_snapshot_fetch_id", None) is not fetch_id:
-                return  # stale fetch — ignore
-            if not _qobject_alive(self):
-                return
-            self._snapshot_fetch_worker = None
-            self._status_bar.showMessage(msg or "获取K线失败")
-
-        worker.bars_ready.connect(_on_bars)
-        worker.failed.connect(_on_fail)
-        worker.start()
+        self._pending_analysis_fetch = (symbol, timeframe, bar_count, force_incremental)
+        self._status_bar.showMessage("等待首次拉取 K 线…")
+        self._set_chart_refresh_paused(False)
+        self._restart_refresh_loop()
 
     def _start_analysis_with_bars(
         self,
@@ -2824,6 +2810,7 @@ class MainWindow(QMainWindow):
         self._sync_buffer_from_snapshot_bars(snapshot_bars)
 
         settings = getattr(self._ctx, "settings", None)
+        independent_analysis = self._independent_analysis_enabled()
         threshold = int(
             getattr(getattr(settings, "general", None), "incremental_max_new_bars", 10)
         )
@@ -2845,8 +2832,9 @@ class MainWindow(QMainWindow):
             timeframe=timeframe,
             bar_count=bar_count,
             now_ms=self._reference_now_ms(),
-            force_incremental=force_incremental,
+            force_incremental=force_incremental and not independent_analysis,
             incremental_threshold=threshold,
+            independent_analysis=independent_analysis,
             parent=None,
         )
         self._prep_worker = prep
@@ -2903,6 +2891,11 @@ class MainWindow(QMainWindow):
         previous_record = getattr(prep, "previous_record", None)
         incremental_new_bar_count = getattr(prep, "incremental_new_bar_count", None)
         incremental_detail = getattr(prep, "incremental_detail", None)
+        if self._independent_analysis_enabled():
+            previous_record = None
+            incremental_new_bar_count = None
+            incremental_detail = None
+            force_incremental = False
 
         if force_incremental and previous_record is None:
             reason = self._incremental_unavailable_reason(frame, symbol, timeframe)
@@ -3063,6 +3056,9 @@ class MainWindow(QMainWindow):
         force_incremental: bool = False,
     ) -> tuple[Any | None, int | None, str | None]:
         """Return a prior record for incremental analysis when configured."""
+        if self._independent_analysis_enabled():
+            return None, None, None
+
         settings = getattr(self._ctx, "settings", None)
         threshold = int(
             getattr(getattr(settings, "general", None), "incremental_max_new_bars", 10)
@@ -3123,6 +3119,8 @@ class MainWindow(QMainWindow):
         timeframe: str,
     ) -> str:
         """Explain why forced incremental analysis cannot start."""
+        if self._independent_analysis_enabled():
+            return "无法增量分析：独立分析模式已开启。"
         try:
             from pa_agent.records.analysis_history import (
                 compute_incremental_bar_delta,
@@ -3928,9 +3926,8 @@ class MainWindow(QMainWindow):
             self._worker = None
             self._update_submit_button_state()
 
-            # Reap any zombie workers / refresh loops that finished while busy
+            # Reap analysis workers that finished while busy.
             self._reap_zombie_workers()
-            self._reap_zombie_loops()
 
             # 分析结束后刷新持续跟踪分析哨兵，防止因分析期间新K线收盘而立即再次触发
             self._refresh_keep_analysis_sentinel()
@@ -3962,8 +3959,19 @@ class MainWindow(QMainWindow):
         self._window_closing = True
         try:
             self._cancel_analysis_worker()
-            self._cancel_snapshot_fetch_worker()
-            self._stop_refresh_loop()
+            loop = getattr(self, "_refresh_loop", None)
+            if loop is not None and loop.isRunning():
+                self._close_pending = True
+                self._stop_refresh_loop()
+                if event is not None:
+                    event.ignore()
+                return
+            if loop is not None:
+                self._refresh_loop = None
+                self._refresh_loop_id = None
+                self._refresh_cancel_token = None
+                loop.deleteLater()
+            self._disconnect_data_source(getattr(self._ctx, "data_source", None))
         except RuntimeError as exc:
             logger.debug("Shutdown cleanup skipped: %s", exc)
         super().closeEvent(event)
@@ -3975,13 +3983,6 @@ class MainWindow(QMainWindow):
             return
         self._startup_api_key_check_done = True
         QTimer.singleShot(0, self._on_startup_api_key_check)
-        if not self._startup_tv_connectivity_check_done:
-            self._startup_tv_connectivity_check_done = True
-            QTimer.singleShot(0, self._on_startup_tv_connectivity_check)
-    def _on_startup_tv_connectivity_check(self) -> None:
-        if self._current_data_source_kind() != "tradingview":
-            return
-        self._ensure_tradingview_reachable()
 
     def _on_startup_api_key_check(self) -> None:
         self._refresh_api_key_ui_state()
@@ -4135,6 +4136,16 @@ class MainWindow(QMainWindow):
         """Return True if the submit button should be enabled."""
         return self._submit_block_reason() is None
 
+    def _independent_analysis_enabled(self) -> bool:
+        settings = getattr(self._ctx, "settings", None)
+        return bool(
+            getattr(
+                getattr(settings, "general", None),
+                "independent_analysis_mode",
+                False,
+            )
+        )
+
     def _submit_block_reason(self) -> str | None:
         """Human-readable reason when submit is disabled, or None if allowed."""
         if not self._has_api_key_configured():
@@ -4156,9 +4167,14 @@ class MainWindow(QMainWindow):
         reason = self._submit_block_reason()
         can = reason is None
         self._submit_btn.setEnabled(can)
+        independent = self._independent_analysis_enabled()
         if hasattr(self, "_incremental_submit_btn"):
-            self._incremental_submit_btn.setEnabled(can)
-            if can:
+            self._incremental_submit_btn.setEnabled(can and not independent)
+            if independent:
+                self._incremental_submit_btn.setToolTip(
+                    "独立分析模式已开启：增量分析和上一轮方案连续性已禁用。"
+                )
+            elif can:
                 self._incremental_submit_btn.setToolTip(
                     "强制基于同品种/周期最近一条成功记录做增量分析，"
                     "不受「增量分析最大新增K线」阈值限制；"
@@ -4188,6 +4204,10 @@ class MainWindow(QMainWindow):
         when bars are already cached; if not cached we default to '提交分析'.
         """
         if not hasattr(self, "_submit_btn"):
+            return
+        if self._independent_analysis_enabled():
+            self._submit_btn.setText("提交分析")
+            self._incremental_available = False
             return
         # Don't change label while analysis is running or button is disabled.
         if self._analysis_in_progress or not self._submit_btn.isEnabled():

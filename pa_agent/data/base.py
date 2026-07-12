@@ -89,6 +89,18 @@ class DataSourceTransientError(DataSourceError):
     """Transient (retryable) error from a data source."""
 
 
+class DataSourceInvalidSymbolError(DataSourceError):
+    """The requested exchange/symbol combination is not supported."""
+
+
+class DataSourceCancelledError(DataSourceError):
+    """An in-flight data-source request was cancelled."""
+
+
+class DataSourceEmptyError(DataSourceTransientError):
+    """The provider completed the request but returned no bars."""
+
+
 class DataSource(ABC):
     """Abstract interface for K-line data providers.
 
@@ -120,7 +132,13 @@ class DataSource(ABC):
         """Cancel the current subscription."""
 
     @abstractmethod
-    def latest_snapshot(self, n: int) -> list[KlineBar]:
+    def latest_snapshot(
+        self,
+        n: int,
+        *,
+        cancel_token: object | None = None,
+        timeout_s: float | None = None,
+    ) -> list[KlineBar]:
         """Return the *n* most recent bars (index 0 = newest, including forming bar).
 
         Raises DataSourceTransientError on recoverable network issues.

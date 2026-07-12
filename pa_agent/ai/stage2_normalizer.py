@@ -1366,6 +1366,7 @@ def normalize_stage2(
     skip_next_bar: bool = False,
     previous_record: Any | None = None,
     structure_flip_cooldown_bars: int = 3,
+    ignore_previous_context: bool = False,
 ) -> dict[str, Any]:
     """Return a copy of *obj* with decision_trace quirks corrected."""
     out = copy.deepcopy(obj)
@@ -1552,7 +1553,7 @@ def normalize_stage2(
     if isinstance(pred_c, dict):
         _normalize_next_cycle_prediction(pred_c, stage1_json=stage1_json)
 
-    if kline_frame is not None and stage1_json:
+    if kline_frame is not None and stage1_json and not ignore_previous_context:
         try:
             from pa_agent.ai.decision_continuity import (
                 apply_continuity_guard,

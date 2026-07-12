@@ -205,6 +205,13 @@ class SettingsDialog(QDialog):
         )
         general_form.addRow("增量分析最大新增K线:", self._incremental_max_new_bars_spin)
 
+        self._independent_analysis_check = QCheckBox("每次分析都不读取上一轮记录或历史交易方案")
+        self._independent_analysis_check.setToolTip(
+            "开启后，本次及后续提交都会按独立全量分析处理：不走增量分析，"
+            "不注入上一轮阶段一/阶段二结论，也不读取 trade_records 作为连续性方案。"
+        )
+        general_form.addRow("独立分析模式:", self._independent_analysis_check)
+
         self._last_symbol_edit = QLineEdit()
         general_form.addRow("上次品种:", self._last_symbol_edit)
 
@@ -291,6 +298,9 @@ class SettingsDialog(QDialog):
         self._chart_seq_font_spin.setValue(int(getattr(g, "chart_seq_label_font_pt", 7)))
         self._incremental_max_new_bars_spin.setValue(
             int(getattr(g, "incremental_max_new_bars", 10))
+        )
+        self._independent_analysis_check.setChecked(
+            bool(getattr(g, "independent_analysis_mode", False))
         )
         stance = getattr(g, "decision_stance", "conservative")
         stance_idx = self._decision_stance_combo.findData(stance)
@@ -443,6 +453,7 @@ class SettingsDialog(QDialog):
         g.stream_pane_font_pt = self._stream_font_spin.value()
         g.chart_seq_label_font_pt = self._chart_seq_font_spin.value()
         g.incremental_max_new_bars = self._incremental_max_new_bars_spin.value()
+        g.independent_analysis_mode = self._independent_analysis_check.isChecked()
         g.decision_stance = self._decision_stance_combo.currentData()  # type: ignore[assignment]
         g.enable_next_bar_prediction = self._enable_next_bar_check.isChecked()
         g.last_symbol = self._last_symbol_edit.text().strip()

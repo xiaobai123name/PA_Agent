@@ -10,10 +10,18 @@ _EPOCH = datetime(1970, 1, 1)
 
 def naive_local_to_utc(dt: datetime) -> datetime:
     """Interpret naive *dt* as local wall time and convert to UTC."""
+    try:
+        import pandas as pd
+
+        if isinstance(dt, pd.Timestamp):
+            dt = dt.to_pydatetime()
+    except ImportError:
+        pass
     if dt.tzinfo is not None:
         return dt.astimezone(timezone.utc)
-    local_offset = timedelta(seconds=-_time.timezone)
-    return dt.replace(tzinfo=timezone(local_offset)).astimezone(timezone.utc)
+    # ``datetime.astimezone()`` treats a naive datetime as host-local time and
+    # applies the correct historical/DST offset for that specific timestamp.
+    return dt.astimezone(timezone.utc)
 
 
 def datetime_to_ts_ms(dt: object) -> int:

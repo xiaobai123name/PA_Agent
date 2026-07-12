@@ -1,93 +1,95 @@
-"""WebSocket lifecycle for TradingViewSource.
-
-These guard the fixes for tvDatafeed 2.x's leaking WebSocket: the source must
-close the socket after every fetch and when re-subscribing, so half-open
-connections don't accumulate (which trips TradingView rate limiting) and a
-symbol/timeframe switch can abort an in-flight request.
-"""
+"""Lifecycle tests for the isolated TradingView fetch supervisor."""
 from __future__ import annotations
 
 from unittest.mock import MagicMock
 
 import pytest
 
+from pa_agent.data.base import DataSourceInvalidSymbolError
 from pa_agent.data.tradingview import TradingViewSource
+from pa_agent.data.tradingview_process import TradingViewFetchRequest
 
 
-def _make_source_with_mock_tv() -> tuple[TradingViewSource, MagicMock]:
-    src = TradingViewSource()
-    tv = MagicMock()
-    tv.ws = MagicMock()
-    src._tv = tv
-    src._connected = True
-    return src, tv
+def _make_source_with_mock_supervisor() -> tuple[TradingViewSource, MagicMock]:
+    source = TradingViewSource()
+    supervisor = MagicMock()
+    source._supervisor = supervisor
+    source._connected = True
+    source.set_exchange("OANDA")
+    source.subscribe("XAUUSD", "15m")
+    supervisor.reset_mock()
+    return source, supervisor
 
 
-def test_close_tv_socket_closes_and_clears() -> None:
-    src, tv = _make_source_with_mock_tv()
-    ws = tv.ws
+def test_cancel_pending_terminates_inflight_worker() -> None:
+    source, supervisor = _make_source_with_mock_supervisor()
 
-    src._close_tv_socket()
+    source.cancel_pending()
 
-    ws.close.assert_called_once()
-    assert tv.ws is None
+    supervisor.cancel_inflight.assert_called_once_with()
 
 
-def test_close_tv_socket_noop_when_no_socket() -> None:
-    src, tv = _make_source_with_mock_tv()
-    tv.ws = None
-    # Should not raise even though there is no live socket.
-    src._close_tv_socket()
+def test_disconnect_stops_supervisor_and_clears_connection() -> None:
+    source, supervisor = _make_source_with_mock_supervisor()
+
+    source.disconnect()
+
+    supervisor.stop.assert_called_once_with()
+    assert source._supervisor is None
+    assert source._connected is False
 
 
-def test_close_tv_socket_swallows_close_error() -> None:
-    src, tv = _make_source_with_mock_tv()
-    tv.ws.close.side_effect = RuntimeError("already closed")
-    # Errors during close must not propagate.
-    src._close_tv_socket()
-    assert tv.ws is None
+def test_subscribe_cancels_previous_request_and_keeps_clean_symbol() -> None:
+    source, supervisor = _make_source_with_mock_supervisor()
+
+    source.set_exchange("BINANCE")
+    source.subscribe("BTCUSDT.P", "1h")
+
+    supervisor.cancel_inflight.assert_called_once_with()
+    assert source._symbol == "BTCUSDT"
+    assert source._timeframe == "1h"
 
 
-def test_disconnect_closes_socket() -> None:
-    src, tv = _make_source_with_mock_tv()
-    ws = tv.ws
+def test_subscribe_rejects_unknown_binance_symbol_before_network() -> None:
+    source, supervisor = _make_source_with_mock_supervisor()
+    source.set_exchange("BINANCE")
 
-    src.disconnect()
+    with pytest.raises(DataSourceInvalidSymbolError, match="仅支持"):
+        source.subscribe("SOLUSDT", "15m")
 
-    ws.close.assert_called_once()
-    assert src._tv is None
-    assert src._connected is False
-
-
-def test_subscribe_aborts_inflight_socket() -> None:
-    src, tv = _make_source_with_mock_tv()
-    ws = tv.ws
-
-    src.subscribe("XAUUSD", "15m")
-
-    # The in-flight socket is closed so the switch takes effect immediately.
-    ws.close.assert_called_once()
-    assert src._symbol == "XAUUSD"
-    assert src._timeframe == "15m"
+    supervisor.cancel_inflight.assert_not_called()
 
 
-def test_fetch_closes_socket_after_each_call() -> None:
-    src, tv = _make_source_with_mock_tv()
-    ws = tv.ws
-    df = MagicMock()
-    df.empty = False
-    tv.get_hist.return_value = df
+def test_fetch_delegates_one_request_to_supervisor() -> None:
+    source, supervisor = _make_source_with_mock_supervisor()
+    rows = [{"datetime": None, "open": 1, "high": 2, "low": 0, "close": 1, "volume": 3}]
+    supervisor.fetch.return_value = rows
 
-    out = src._fetch_hist_with_retry(
-        symbol="XAUUSD", exchange="OANDA", interval=object(), n_bars=10
+    out = source._fetch_hist_with_retry(
+        symbol="XAUUSD",
+        exchange="OANDA",
+        interval_name="in_15_minute",
+        n_bars=10,
+        cancel_token=None,
+        timeout_s=12.0,
     )
 
-    assert out is df
-    ws.close.assert_called_once()
-    assert tv.ws is None
+    assert out is rows
+    request = supervisor.fetch.call_args.args[0]
+    assert request == TradingViewFetchRequest(
+        exchange="OANDA",
+        symbol="XAUUSD",
+        interval_name="in_15_minute",
+        n_bars=10,
+    )
+    assert supervisor.fetch.call_args.kwargs == {
+        "cancel_token": None,
+        "timeout_s": 12.0,
+    }
 
 
 def test_subscribe_rejects_unknown_timeframe() -> None:
-    src, _tv = _make_source_with_mock_tv()
+    source, _supervisor = _make_source_with_mock_supervisor()
+
     with pytest.raises(ValueError):
-        src.subscribe("XAUUSD", "7m")
+        source.subscribe("XAUUSD", "7m")

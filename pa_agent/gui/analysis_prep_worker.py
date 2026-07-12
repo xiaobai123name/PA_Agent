@@ -34,6 +34,7 @@ class AnalysisPrepWorker(QThread):
         now_ms: int,
         force_incremental: bool,
         incremental_threshold: int,
+        independent_analysis: bool = False,
         parent: Any = None,
     ) -> None:
         super().__init__(parent)
@@ -44,6 +45,7 @@ class AnalysisPrepWorker(QThread):
         self._now_ms = now_ms
         self._force_incremental = force_incremental
         self._incremental_threshold = incremental_threshold
+        self._independent_analysis = independent_analysis
 
     def run(self) -> None:
         try:
@@ -69,7 +71,10 @@ class AnalysisPrepWorker(QThread):
             incremental_new_bar_count: int | None = None
             incremental_detail: str | None = None
 
-            if self._force_incremental or self._incremental_threshold > 0:
+            if (
+                not self._independent_analysis
+                and (self._force_incremental or self._incremental_threshold > 0)
+            ):
                 previous = find_latest_successful_record(
                     symbol=self._symbol,
                     timeframe=self._timeframe,

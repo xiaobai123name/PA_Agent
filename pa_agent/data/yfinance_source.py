@@ -106,7 +106,9 @@ class YFinanceSource(DataSource):
 
     # ── Data fetch ────────────────────────────────────────────────────────────
 
-    def latest_snapshot(self, n: int) -> list[KlineBar]:
+    def latest_snapshot(
+        self, n: int, *, cancel_token: object | None = None, timeout_s: float | None = None
+    ) -> list[KlineBar]:
         """Return *n* bars newest-first; bars[0] is the forming (unclosed) bar."""
         if not self._connected:
             raise DataSourceTransientError("Not connected — call connect() first")

@@ -18,6 +18,7 @@
     "decision_flow_auto_play": true,
     "decision_flow_play_seconds": 50,
     "incremental_max_new_bars": 10,
+    "independent_analysis_mode": false,
     "decision_stance": "balanced",
     "structure_flip_cooldown_bars": 3,
     "decision_flow_default_zoom_pct": 600,

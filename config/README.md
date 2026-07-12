@@ -53,6 +53,7 @@
 | `general.context_warning_threshold_pct` | float | `80.0` | 上下文占用警告阈值（百分比） |
 | `general.decision_stance` | string | `"balanced"` | 阶段二交易倾向：`conservative` / `balanced` / `aggressive` / `extreme_aggressive` |
 | `general.incremental_max_new_bars` | int | `10` | 增量分析触发阈值：新增已收盘 K 线 ≤ 此值时自动走增量模式（0–500） |
+| `general.independent_analysis_mode` | bool | `false` | 开启后每次分析都不读取上一轮分析记录或 `trade_records` 历史方案，不走增量，也不注入阶段二方案连续性 |
 | `general.auto_resume_chart_after_analysis` | bool | `false` | 分析结束后是否自动恢复「图表实时更新」 |
 | `general.keep_analysis` | bool | `false` | 持续跟踪分析：新 K 线收盘时自动触发新一轮分析 |
 | `general.cancel_keep_analysis_on_retry` | bool | `false` | 校验失败触发重试后自动关闭 `keep_analysis` |

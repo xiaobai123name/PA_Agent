@@ -686,6 +686,71 @@ def test_previous_prediction_rendered_in_incremental_mode(assembler: PromptAssem
     assert "60%" in user
 
 
+def test_stage2_ignore_previous_context_omits_continuity_and_prediction(
+    assembler: PromptAssembler,
+):
+    from pa_agent.records.schema import AnalysisRecord, RecordMeta
+
+    frame = _make_frame()
+    stage1_messages = assembler.build_stage1(frame)
+    stage1_json = {
+        "cycle_position": "normal_channel",
+        "direction": "bearish",
+        "gate_result": "proceed",
+    }
+    previous = AnalysisRecord(
+        meta=RecordMeta(
+            timestamp_local_iso="2026-01-01T00:00:00.000",
+            timestamp_local_ms=1,
+            symbol="XAUUSD",
+            timeframe="1h",
+            bar_count=5,
+            ai_provider={},
+        ),
+        kline_data=[],
+        htf_text="",
+        stage1_messages=[],
+        stage1_response=None,
+        stage1_diagnosis={"cycle_position": "normal_channel"},
+        stage2_messages=[],
+        stage2_response=None,
+        stage2_decision={
+            "decision": {
+                "order_type": "\u9650\u4ef7\u5355",
+                "order_direction": "\u505a\u7a7a",
+                "entry_price": 123.45,
+                "stop_loss_price": 124.0,
+            },
+            "next_bar_prediction": {
+                "direction": "bearish",
+                "probabilities": {"bullish": 10, "bearish": 80, "neutral": 10},
+                "reasoning": "test",
+                "unpredictable": False,
+            },
+        },
+        strategy_files_used=[],
+        experience_loaded=[],
+        exception=None,
+        usage_total={},
+    )
+
+    messages = assembler.build_stage2_continuation(
+        frame=frame,
+        stage1_messages=stage1_messages,
+        stage1_reply_content='{"cycle_position":"normal_channel","direction":"bearish"}',
+        stage1_json=stage1_json,
+        strategy_files=["下跌通道分析识别.txt"],
+        experience_entries=[],
+        previous_record=previous,
+        ignore_previous_context=True,
+    )
+
+    user = messages[-1]["content"]
+    assert "上一轮交易方案连续性" not in user
+    assert "上一轮下一根K线预测" not in user
+    assert "123.45" not in user
+
+
 def test_no_previous_prediction_no_summary(assembler: PromptAssembler):
     """Without previous_record, prompt must not contain prediction summary."""
     frame = _make_frame()

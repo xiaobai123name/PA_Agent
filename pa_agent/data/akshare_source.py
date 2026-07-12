@@ -307,7 +307,9 @@ class AkShareSource(DataSource):
         code = normalize_ashare_symbol(symbol)
         return bool(_STOCK_CODE_RE.match(code) or code.startswith(("sh", "sz")))
 
-    def latest_snapshot(self, n: int) -> list[KlineBar]:
+    def latest_snapshot(
+        self, n: int, *, cancel_token: object | None = None, timeout_s: float | None = None
+    ) -> list[KlineBar]:
         if not self._connected:
             raise DataSourceTransientError("AkShare 未连接")
         if not self._symbol or not self._timeframe:

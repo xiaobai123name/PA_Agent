@@ -10,6 +10,9 @@ logger = logging.getLogger(__name__)
 
 
 def main(argv: list[str] | None = None) -> int:
+    from multiprocessing import freeze_support
+
+    freeze_support()
     # Early diagnostics before Qt / heavy imports: crash dumps + file logging.
     from pa_agent.util.crash_diagnostics import enable_crash_diagnostics, log_startup_diagnostics
     from pa_agent.util.logging import configure_logging

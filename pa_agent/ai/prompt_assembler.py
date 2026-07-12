@@ -1473,6 +1473,7 @@ class PromptAssembler:
         experience_entries: list[Any],
         *,
         decision_stance: str = "conservative",
+        ignore_previous_context: bool = False,
     ) -> list[dict]:
         """Build a standalone Stage 2 request (kept for tests/tools)."""
         system_content = self._build_stage2_system_prompt()
@@ -1483,6 +1484,7 @@ class PromptAssembler:
             experience_entries=experience_entries,
             decision_stance=decision_stance,
             enable_next_bar_prediction=False,
+            ignore_previous_context=ignore_previous_context,
         )
         return [
             {"role": "system", "content": system_content},
@@ -1553,6 +1555,7 @@ class PromptAssembler:
         provider_settings: Any | None = None,
         use_prefix_chain: bool | None = None,
         structure_flip_cooldown_bars: int = 3,
+        ignore_previous_context: bool = False,
     ) -> list[dict]:
         """Build Stage 2 messages, optionally chaining after Stage 1 for KV cache.
 
@@ -1578,6 +1581,7 @@ class PromptAssembler:
             enable_next_bar_prediction=enable_next_bar_prediction,
             omit_kline_block=chain_after_s1,
             structure_flip_cooldown_bars=structure_flip_cooldown_bars,
+            ignore_previous_context=ignore_previous_context,
         )
 
         if chain_after_s1:
@@ -1608,6 +1612,7 @@ class PromptAssembler:
         enable_next_bar_prediction: bool = False,
         omit_kline_block: bool = False,
         structure_flip_cooldown_bars: int = 3,
+        ignore_previous_context: bool = False,
     ) -> str:
         """Build the Stage 2 task turn for standalone or prefix-chain mode."""
         from pa_agent.ai.decision_continuity import (
@@ -1616,13 +1621,16 @@ class PromptAssembler:
         )
 
         stance_block = build_decision_stance_guidance(normalize_stance(decision_stance))
-        continuity_ctx = build_continuity_context(
-            frame=frame,
-            stage1_json=stage1_json,
-            previous_record=previous_record,
-            cooldown_bars=structure_flip_cooldown_bars,
-        )
-        continuity_block = render_continuity_prompt_block(continuity_ctx)
+        if ignore_previous_context:
+            continuity_block = ""
+        else:
+            continuity_ctx = build_continuity_context(
+                frame=frame,
+                stage1_json=stage1_json,
+                previous_record=previous_record,
+                cooldown_bars=structure_flip_cooldown_bars,
+            )
+            continuity_block = render_continuity_prompt_block(continuity_ctx)
         conflict_block = self._render_trend_conflict_guidance(stage1_json)
         transition_block = self._render_transition_guidance(stage1_json)
         planned_limit_block = self._render_planned_limit_hint(stage1_json, frame)
@@ -1672,7 +1680,11 @@ class PromptAssembler:
 
         n_bars = len(frame.bars)
         breakout_tick_hint = format_breakout_tick_hint(frame)
-        prev_pred_block = self._render_previous_prediction(previous_record)
+        prev_pred_block = (
+            ""
+            if ignore_previous_context
+            else self._render_previous_prediction(previous_record)
+        )
         compact_s1 = json.dumps(
             self._compact_stage1_for_stage2(stage1_json),
             ensure_ascii=False,

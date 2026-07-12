@@ -373,6 +373,17 @@ class TwoStageOrchestrator:
             Fully or partially populated record.
         """
         # ── Step 1: Build partial record ──────────────────────────────────────
+        independent_analysis = bool(
+            getattr(
+                getattr(self._settings, "general", None),
+                "independent_analysis_mode",
+                False,
+            )
+        )
+        if independent_analysis:
+            previous_record = None
+            incremental_new_bar_count = None
+
         record = _build_empty_record(frame, self._settings)
 
         # ── Step 2: Pre-Stage-1 cancel check ─────────────────────────────────
@@ -707,6 +718,7 @@ class TwoStageOrchestrator:
             enable_next_bar_prediction=_enable_next_bar,
             provider_settings=getattr(self._settings, "provider", None),
             structure_flip_cooldown_bars=_flip_cooldown,
+            ignore_previous_context=independent_analysis,
         )
 
         # ── Step 15: Call AI for Stage 2 ──────────────────────────────────────
@@ -856,6 +868,7 @@ class TwoStageOrchestrator:
                 "skip_next_bar": not _enable_next_bar,
                 "previous_record": previous_record,
                 "structure_flip_cooldown_bars": _flip_cooldown,
+                "ignore_previous_context": independent_analysis,
             },
             call_api=_call_s2_retry,
             provider_settings=getattr(self._settings, "provider", None),

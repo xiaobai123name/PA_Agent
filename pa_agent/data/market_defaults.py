@@ -13,6 +13,17 @@ GOLD_MT5_SYMBOL = "XAUUSDm"
 GOLD_TV_SYMBOL = "XAUUSD"
 GOLD_TV_EXCHANGE = "OANDA"
 
+# The only Binance products exposed by this desktop UI.  Display symbols stay
+# clean; tvDatafeed uses TradingView's ``.P`` suffix for perpetual contracts.
+BINANCE_DEFAULT_SYMBOL = "BTCUSDT"
+BINANCE_PERP_SYMBOL_MAP: dict[str, str] = {
+    "BTCUSDT": "BTCUSDT.P",
+    "ETHUSDT": "ETHUSDT.P",
+    "XAUUSDT": "XAUUSDT.P",
+    "QQQUSDT": "QQQUSDT.P",
+}
+BINANCE_SUPPORTED_SYMBOLS: tuple[str, ...] = tuple(BINANCE_PERP_SYMBOL_MAP)
+
 # AkShare A-share defaults (平安银行 / 日线与 1h 分析常用)
 A_SHARE_DEFAULT_SYMBOL = "000001"
 A_SHARE_DEFAULT_TIMEFRAME = "1h"
@@ -45,6 +56,8 @@ TV_CRYPTO_EXCHANGES: tuple[str, ...] = (
 _CRYPTO_SYMBOL_EXCHANGE_HINTS: dict[str, str] = {
     "BTCUSDT": "BINANCE",
     "ETHUSDT": "BINANCE",
+    "XAUUSDT": "BINANCE",
+    "QQQUSDT": "BINANCE",
     "BTCUSD": "BITSTAMP",
     "ETHUSD": "BITSTAMP",
     "SOLUSDT": "BINANCE",
@@ -52,6 +65,16 @@ _CRYPTO_SYMBOL_EXCHANGE_HINTS: dict[str, str] = {
     "XRPUSDT": "BINANCE",
     "DOGEUSDT": "BINANCE",
 }
+
+
+def normalize_binance_display_symbol(symbol: str) -> str:
+    """Return the clean supported Binance symbol or the UI default."""
+    sym = (symbol or "").strip().upper()
+    if sym.endswith(".P"):
+        sym = sym[:-2]
+    if sym in BINANCE_PERP_SYMBOL_MAP:
+        return sym
+    return BINANCE_DEFAULT_SYMBOL
 
 # Major index tickers on TradingView — (exchange, probe_order)
 # These need specific exchanges; forex/gold auto-probe will never find them.
@@ -375,6 +398,19 @@ def resolve_tv_fetch_pair(exchange: str, symbol: str) -> tuple[str, str]:
     sym = (symbol or "").strip()
     if is_tv_exchange_auto(ex):
         return "", sym
+    if ex == "BINANCE":
+        from pa_agent.data.tv_symbol_lookup import TvSymbolNotFoundError
+
+        clean = sym.upper()
+        if clean.endswith(".P"):
+            clean = clean[:-2]
+        feed_symbol = BINANCE_PERP_SYMBOL_MAP.get(clean)
+        if feed_symbol is None:
+            supported = "、".join(BINANCE_SUPPORTED_SYMBOLS)
+            raise TvSymbolNotFoundError(
+                f"Binance 当前仅支持：{supported}；收到 {sym or '空品种'}"
+            )
+        return "BINANCE", feed_symbol
     if is_tv_name_input(sym):
         hit = lookup_tv_symbol_by_name(sym)
         if hit is not None:
@@ -476,6 +512,11 @@ def migrate_general_gold_defaults(general: dict) -> None:
     """In-place migration: gold symbol + valid TV exchange/symbol pair."""
     kind = str(general.get("last_data_source", "mt5"))
     sym = str(general.get("last_symbol", ""))
+    exchange = str(general.get("last_tradingview_exchange", ""))
+    if kind == "tradingview" and exchange.strip().upper() == "BINANCE":
+        general["last_tradingview_exchange"] = "BINANCE"
+        general["last_symbol"] = normalize_binance_display_symbol(sym)
+        return
     general["last_symbol"] = normalize_gold_symbol_for_kind(kind, sym)
     if kind == "tradingview":
         ex, sym, _ = resolve_tv_pair(

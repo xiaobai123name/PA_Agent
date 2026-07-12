@@ -153,7 +153,9 @@ class EastMoneySource(DataSource):
         self._snap_cache_n = 0
         logger.info("EastMoneySource unsubscribed")
 
-    def latest_snapshot(self, n: int) -> list[KlineBar]:
+    def latest_snapshot(
+        self, n: int, *, cancel_token: object | None = None, timeout_s: float | None = None
+    ) -> list[KlineBar]:
         if not self._connected:
             raise DataSourceTransientError("东方财富数据源未连接")
         if not self._symbol or not self._timeframe:

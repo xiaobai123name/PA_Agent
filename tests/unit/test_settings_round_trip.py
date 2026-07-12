@@ -23,6 +23,7 @@ def test_defaults(tmp_path):
     assert s.general.decision_stance == "balanced"
     assert s.general.decision_flow_auto_play is True
     assert s.general.auto_resume_chart_after_analysis is False
+    assert s.general.independent_analysis_mode is False
     assert p.exists(), "defaults should be written to disk"
 
 
@@ -104,6 +105,16 @@ def test_tushare_round_trip(tmp_path):
     save_settings(original, p)
     loaded = load_settings(p)
     assert loaded.tushare.token == "ts-test-token"
+
+
+def test_independent_analysis_mode_round_trip(tmp_path):
+    """save -> load preserves independent analysis mode."""
+    p = tmp_path / "settings.json"
+    original = Settings()
+    original.general.independent_analysis_mode = True
+    save_settings(original, p)
+    loaded = load_settings(p)
+    assert loaded.general.independent_analysis_mode is True
 
 
 def test_pushplus_auto_disabled_when_enabled_without_token(tmp_path):

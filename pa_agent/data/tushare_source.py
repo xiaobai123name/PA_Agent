@@ -196,7 +196,9 @@ class TushareSource(DataSource):
     def is_symbol_available(self, symbol: str) -> bool:
         return bool(_TS_CODE_RE.match(normalize_tushare_symbol(symbol)))
 
-    def latest_snapshot(self, n: int) -> list[KlineBar]:
+    def latest_snapshot(
+        self, n: int, *, cancel_token: object | None = None, timeout_s: float | None = None
+    ) -> list[KlineBar]:
         if not self._connected:
             raise DataSourceTransientError("Tushare 未连接")
         if not self._symbol or not self._timeframe:

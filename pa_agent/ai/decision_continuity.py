@@ -229,11 +229,30 @@ def build_continuity_context(
     stage1_json: dict,
     previous_record: Any | None = None,
     cooldown_bars: int = DEFAULT_STRUCTURE_FLIP_COOLDOWN_BARS,
+    ignore_previous: bool = False,
 ) -> dict[str, Any]:
     """Assemble continuity facts for prompt injection and CSV audit."""
     symbol = getattr(frame, "symbol", "") or ""
     timeframe = getattr(frame, "timeframe", "") or ""
     tick = infer_price_tick_from_frame(frame)
+    direction = str(stage1_json.get("direction") or "neutral")
+
+    if ignore_previous:
+        return {
+            "has_previous_plan": False,
+            "previous_decision": {},
+            "previous_time": None,
+            "previous_source": "ignored",
+            "bars_since": 0,
+            "cooldown_bars": max(1, int(cooldown_bars)),
+            "invalidated": False,
+            "invalidation_reason": "",
+            "previous_entry": None,
+            "tick": tick,
+            "direction": direction,
+            "always_in_branch": None,
+            "timeframe": timeframe,
+        }
 
     prev_decision = decision_from_previous_record(previous_record)
     prev_time = previous_record_time_iso(previous_record)
@@ -258,7 +277,6 @@ def build_continuity_context(
 
     invalidated, invalidation_reason = assess_plan_invalidation(prev_decision, frame)
     prev_entry = _parse_price((prev_decision or {}).get("entry_price"))
-    direction = str(stage1_json.get("direction") or "neutral")
     always_in = extract_always_in_branch(stage1_json)
 
     return {

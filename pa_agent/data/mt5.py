@@ -183,7 +183,9 @@ class MT5Source(DataSource):
 
     # ── Data fetch ────────────────────────────────────────────────────────────
 
-    def latest_snapshot(self, n: int) -> list[KlineBar]:
+    def latest_snapshot(
+        self, n: int, *, cancel_token: object | None = None, timeout_s: float | None = None
+    ) -> list[KlineBar]:
         """Return *n* bars newest-first; bars[0] is the forming (unclosed) bar.
 
         Uses copy_rates_from_pos(symbol, timeframe, 0, n+1):

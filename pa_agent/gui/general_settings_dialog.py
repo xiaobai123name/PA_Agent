@@ -108,6 +108,13 @@ class GeneralSettingsDialog(QDialog):
         )
         analysis_form.addRow("增量分析最大新增K线:", self._incremental_max_new_bars_spin)
 
+        self._independent_analysis_check = QCheckBox("每次分析都不读取上一轮记录或历史交易方案")
+        self._independent_analysis_check.setToolTip(
+            "开启后，本次及后续提交都会按独立全量分析处理：不走增量分析，"
+            "不注入上一轮阶段一/阶段二结论，也不读取 trade_records 作为连续性方案。"
+        )
+        analysis_form.addRow("独立分析模式:", self._independent_analysis_check)
+
         self._keep_analysis_check = QCheckBox("有新K线收盘时自动开始新一轮分析")
         self._keep_analysis_check.setToolTip(
             "勾选后，每当有新的K线收盘时自动触发分析（与主界面「持续跟踪分析」勾选框同步）"
@@ -225,6 +232,9 @@ class GeneralSettingsDialog(QDialog):
         self._incremental_max_new_bars_spin.setValue(
             int(getattr(g, "incremental_max_new_bars", 10))
         )
+        self._independent_analysis_check.setChecked(
+            bool(getattr(g, "independent_analysis_mode", False))
+        )
         self._keep_analysis_check.setChecked(bool(getattr(g, "keep_analysis", False)))
         self._cancel_keep_on_retry_check.setChecked(
             bool(getattr(g, "cancel_keep_analysis_on_retry", False))
@@ -259,6 +269,7 @@ class GeneralSettingsDialog(QDialog):
 
         g.analysis_bar_count = self._analysis_bar_count_spin.value()
         g.incremental_max_new_bars = self._incremental_max_new_bars_spin.value()
+        g.independent_analysis_mode = self._independent_analysis_check.isChecked()
         g.keep_analysis = self._keep_analysis_check.isChecked()
         g.cancel_keep_analysis_on_retry = self._cancel_keep_on_retry_check.isChecked()
         g.last_symbol = self._last_symbol_edit.text().strip()

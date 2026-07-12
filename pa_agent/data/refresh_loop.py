@@ -1,11 +1,22 @@
-"""1 Hz data refresh loop running on a dedicated QThread."""
+"""Cancellable K-line refresh state machine running on one QThread."""
 from __future__ import annotations
 
+from dataclasses import dataclass
+from enum import Enum
 import logging
+import threading
 import time
 from typing import TYPE_CHECKING
 
-from pa_agent.data.base import DataSource, DataSourceTransientError, KlineBar
+from PyQt6.QtCore import QObject, QThread, pyqtSignal
+
+from pa_agent.data.base import (
+    DataSource,
+    DataSourceCancelledError,
+    DataSourceEmptyError,
+    DataSourceInvalidSymbolError,
+    DataSourceTransientError,
+)
 from pa_agent.data.snapshot import INDICATOR_WARMUP_BARS
 
 if TYPE_CHECKING:
@@ -13,26 +24,37 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-from PyQt6.QtCore import QThread, pyqtSignal, QObject
+
+class RefreshPhase(str, Enum):
+    IDLE = "idle"
+    CONNECTING = "connecting"
+    LIVE = "live"
+    RETRY_WAIT = "retry_wait"
+    STOPPING = "stopping"
+    CIRCUIT_OPEN = "circuit_open"
+    CANCELLED = "cancelled"
+
+
+@dataclass(frozen=True)
+class RefreshStatus:
+    phase: RefreshPhase
+    message: str
+    attempt: int = 0
+    max_attempts: int = 3
+    retry_in_s: int = 0
+    error_code: str = ""
 
 
 class RefreshLoop(QThread):
-    """Fetches the latest K-line snapshot every *interval_ms* milliseconds.
-
-    Signals
-    -------
-    frame_ready(list[KlineBar])
-        Emitted after each successful fetch with the raw bar list (newest-first).
-    status_changed(str)
-        Emitted with a human-readable status string (e.g. "数据延迟").
-    """
+    """Perform the initial fetch, then continue refreshing with one owner."""
 
     frame_ready = pyqtSignal(list)
     status_changed = pyqtSignal(str)
+    state_changed = pyqtSignal(object)
 
-    # Backoff constants
-    _MAX_BACKOFF_S = 10.0       # cap exponential backoff at 10 seconds
-    _BACKOFF_BASE_S = 0.5      # initial backoff = 0.5s, doubles each failure
+    _RETRY_DELAYS_S = (1, 2, 4)
+    _MAX_FAILURES = 3
+    _FETCH_TIMEOUT_S = 12.0
 
     def __init__(
         self,
@@ -46,75 +68,145 @@ class RefreshLoop(QThread):
         self._source = data_source
         self._n_bars = n_bars
         self._interval_ms = interval_ms
-        self._cancel_token = cancel_token
+        self._cancel_token = cancel_token or threading.Event()
         self._consecutive_failures = 0
-        self._failure_threshold_s = 5.0
-        self._in_flight = False  # guard against overlapping fetches
+        self._initial_fetch_complete = False
 
-    def run(self) -> None:  # noqa: C901
-        """Main loop — runs on the worker thread."""
-        failure_start: float | None = None
+    def request_stop(self) -> None:
+        if self._cancel_token is not None:
+            self._cancel_token.set()
+        cancel_pending = getattr(self._source, "cancel_pending", None)
+        if callable(cancel_pending):
+            cancel_pending()
 
-        while True:
-            if self._cancel_token is not None and self._cancel_token.is_set():
-                logger.debug("RefreshLoop cancelled")
+    def run(self) -> None:
+        while not self._cancelled():
+            attempt = self._consecutive_failures + 1
+            phase_message = (
+                f"首次拉取 {attempt}/{self._MAX_FAILURES}"
+                if not self._initial_fetch_complete
+                else "正在刷新 K 线"
+            )
+            self._emit_state(
+                RefreshStatus(
+                    phase=RefreshPhase.CONNECTING,
+                    message=phase_message,
+                    attempt=attempt,
+                    max_attempts=self._MAX_FAILURES,
+                )
+            )
+            started = time.monotonic()
+            try:
+                bars = self._source.latest_snapshot(
+                    self._n_bars + INDICATOR_WARMUP_BARS + 5,
+                    cancel_token=self._cancel_token,
+                    timeout_s=self._FETCH_TIMEOUT_S,
+                )
+                if not bars:
+                    raise DataSourceEmptyError("数据源未返回 K 线")
+            except DataSourceCancelledError:
+                break
+            except DataSourceInvalidSymbolError as exc:
+                self._emit_circuit(str(exc), "invalid_symbol")
+                return
+            except DataSourceEmptyError as exc:
+                if self._handle_retryable_failure(exc, "empty_data"):
+                    return
+                continue
+            except DataSourceTransientError as exc:
+                if self._handle_retryable_failure(exc, self._classify_error(exc)):
+                    return
+                continue
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("RefreshLoop fetch failed: %s", exc)
+                if self._handle_retryable_failure(exc, self._classify_error(exc)):
+                    return
+                continue
+
+            self._consecutive_failures = 0
+            self._initial_fetch_complete = True
+            self.frame_ready.emit(bars)
+            self._emit_state(
+                RefreshStatus(
+                    phase=RefreshPhase.LIVE,
+                    message="数据已就绪",
+                    max_attempts=self._MAX_FAILURES,
+                )
+            )
+            elapsed_ms = (time.monotonic() - started) * 1000
+            wait_s = max(0.0, (self._interval_ms - elapsed_ms) / 1000.0)
+            if self._wait_cancel(wait_s):
                 break
 
-            # Skip this tick if a previous fetch is still in flight.
-            # This prevents overlapping WebSocket connections that trigger
-            # TradingView rate-limiting (especially in nologin mode).
-            if self._in_flight:
-                time.sleep(0.5)
-                continue
+        self._emit_state(
+            RefreshStatus(
+                phase=RefreshPhase.CANCELLED,
+                message="数据刷新已停止",
+                max_attempts=self._MAX_FAILURES,
+            )
+        )
 
-            t0 = time.monotonic()
-            self._in_flight = True
-            try:
-                try:
-                    bars = self._source.latest_snapshot(
-                        self._n_bars + INDICATOR_WARMUP_BARS + 5
-                    )
-                    if self._consecutive_failures > 0:
-                        # Clear any previous error message from the status bar.
-                        self.status_changed.emit("")
-                    self._consecutive_failures = 0
-                    failure_start = None
-                    if bars:
-                        self.frame_ready.emit(bars)
+    def _handle_retryable_failure(self, exc: BaseException, error_code: str) -> bool:
+        self._consecutive_failures += 1
+        message = str(exc).strip() or "数据拉取失败"
+        logger.info(
+            "RefreshLoop failure %d/%d [%s]: %s",
+            self._consecutive_failures,
+            self._MAX_FAILURES,
+            error_code,
+            message,
+        )
+        if self._consecutive_failures >= self._MAX_FAILURES:
+            self._emit_circuit(message, error_code)
+            return True
 
-                except DataSourceTransientError as exc:
-                    logger.debug("RefreshLoop transient error: %s", exc)
-                    self._consecutive_failures += 1
-                    if failure_start is None:
-                        failure_start = time.monotonic()
-                    user_msg = str(exc).strip()
-                    if user_msg:
-                        self.status_changed.emit(user_msg)
-                    elapsed = time.monotonic() - failure_start
-                    if elapsed >= self._failure_threshold_s and not user_msg:
-                        self.status_changed.emit("数据延迟")
-                except Exception as exc:  # noqa: BLE001
-                    logger.error("RefreshLoop unexpected error: %s", exc, exc_info=True)
-            finally:
-                self._in_flight = False
-
-            # Exponential backoff on repeated failures to avoid hammering
-            # TradingView's WebSocket endpoint
-            if self._consecutive_failures > 0:
-                backoff_s = min(
-                    self._BACKOFF_BASE_S * (2 ** (self._consecutive_failures - 1)),
-                    self._MAX_BACKOFF_S,
+        delay = self._RETRY_DELAYS_S[self._consecutive_failures - 1]
+        for remaining in range(delay, 0, -1):
+            self._emit_state(
+                RefreshStatus(
+                    phase=RefreshPhase.RETRY_WAIT,
+                    message=f"{message}；{remaining}s 后重试",
+                    attempt=self._consecutive_failures + 1,
+                    max_attempts=self._MAX_FAILURES,
+                    retry_in_s=remaining,
+                    error_code=error_code,
                 )
-                logger.debug(
-                    "RefreshLoop backoff %.1fs after %d consecutive failure(s)",
-                    backoff_s,
-                    self._consecutive_failures,
-                )
-                time.sleep(backoff_s)
-                continue
+            )
+            if self._wait_cancel(1.0):
+                return True
+        return False
 
-            elapsed_ms = (time.monotonic() - t0) * 1000
-            sleep_ms = max(0.0, self._interval_ms - elapsed_ms)
-            if sleep_ms > 0:
-                time.sleep(sleep_ms / 1000.0)
+    def _emit_circuit(self, message: str, error_code: str) -> None:
+        self._emit_state(
+            RefreshStatus(
+                phase=RefreshPhase.CIRCUIT_OPEN,
+                message=message,
+                attempt=self._consecutive_failures,
+                max_attempts=self._MAX_FAILURES,
+                error_code=error_code,
+            )
+        )
 
+    def _emit_state(self, status: RefreshStatus) -> None:
+        self.state_changed.emit(status)
+        self.status_changed.emit(status.message)
+
+    def _cancelled(self) -> bool:
+        return bool(self._cancel_token is not None and self._cancel_token.is_set())
+
+    def _wait_cancel(self, seconds: float) -> bool:
+        if seconds <= 0:
+            return self._cancelled()
+        if self._cancel_token is not None:
+            return self._cancel_token.wait(seconds)
+        time.sleep(seconds)
+        return False
+
+    @staticmethod
+    def _classify_error(exc: BaseException) -> str:
+        text = str(exc).lower()
+        if "timed out" in text or "timeout" in text or "超时" in text:
+            return "timeout"
+        if "empty" in text or "no data" in text or "无可用" in text:
+            return "empty_data"
+        return "network"
