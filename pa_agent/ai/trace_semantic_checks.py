@@ -18,10 +18,9 @@ _BOILERPLATE_REASONS = frozenset(
         "符合",
         "是",
         "否",
-        "—",
-        "-",
     }
 )
+_EMPTY_REASON_TOKENS = frozenset({"", "—", "-"})
 
 _PROCEED_FINAL_TOKENS = (
     "进入阶段二",
@@ -148,6 +147,8 @@ def validate_trace_semantics(
             continue
 
         reason = str(item.get("reason", "") or "").strip()
+        if reason in _EMPTY_REASON_TOKENS:
+            reason = ""
         if _trace_reason_required(item):
             if not reason:
                 errors.append(f"{path_prefix}[{i}].reason: required non-empty string")

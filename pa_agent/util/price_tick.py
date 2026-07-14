@@ -6,7 +6,13 @@ from typing import Any
 
 
 def infer_price_tick_from_frame(kline_frame: Any) -> float | None:
-    """Guess one tick from decimal places in the snapshot (e.g. XAU 0.01 or 0.001)."""
+    """Return explicit exchange tick, or infer it from OHLC precision."""
+    explicit_tick = getattr(kline_frame, "price_tick", None)
+    if explicit_tick is not None:
+        tick = float(explicit_tick)
+        if tick <= 0:
+            raise ValueError(f"price_tick must be positive, got {explicit_tick!r}")
+        return tick
     bars = getattr(kline_frame, "bars", None) if kline_frame is not None else None
     if not bars:
         return None

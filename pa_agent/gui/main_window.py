@@ -254,6 +254,7 @@ class MainWindow(QMainWindow):
         self._demo_auto_next_armed = False
         self._demo_waiting_flow_playback = False
         self._startup_api_key_check_done = False
+        self._backtest_window: Any = None
         self._symbol_switch_timer: QTimer | None = None
         self._pending_symbol_switch: tuple[str, str] | None = None
         # RefreshLoop runs in its own QThread
@@ -337,7 +338,12 @@ class MainWindow(QMainWindow):
         _general_action.triggered.connect(self._open_general_settings_dialog)
         menu_bar.addAction(_general_action)
 
-        # 4. 演示模式 — 保留下拉菜单
+        # 4. 回测 — 独立窗口，不占用实时分析工作台
+        _backtest_action = QAction("回测", self)
+        _backtest_action.triggered.connect(self._open_backtest_window)
+        menu_bar.addAction(_backtest_action)
+
+        # 5. 演示模式 — 保留下拉菜单
         demo_menu = menu_bar.addMenu("演示模式")
         self._demo_manual_action = QAction("手动选择记录…", self)
         self._demo_manual_action.triggered.connect(lambda: self._on_demo_menu_action("manual"))
@@ -350,6 +356,18 @@ class MainWindow(QMainWindow):
         self._demo_exit_action.triggered.connect(self._exit_demo_mode)
         self._demo_exit_action.setEnabled(False)
         demo_menu.addAction(self._demo_exit_action)
+
+    def _open_backtest_window(self) -> None:
+        from pa_agent.gui.backtest_window import BacktestWindow
+
+        if self._backtest_window is None:
+            self._backtest_window = BacktestWindow(self._ctx, self)
+            self._backtest_window.destroyed.connect(
+                lambda: setattr(self, "_backtest_window", None)
+            )
+        self._backtest_window.show()
+        self._backtest_window.raise_()
+        self._backtest_window.activateWindow()
 
     def _build_workbench(self) -> QWidget:
         """Build chart + AI sidebar workbench."""

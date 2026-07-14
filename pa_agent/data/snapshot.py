@@ -194,7 +194,7 @@ def build_live_frame(
         timeframe=timeframe,
         bars=tuple(rebased),
         indicators=indicators,
-        snapshot_ts_local_ms=now_local_ms(),
+        snapshot_ts_local_ms=int(now_ms) if now_ms is not None else now_local_ms(),
     )
 
 
@@ -223,6 +223,7 @@ def build_analysis_frame(
     timeframe: str,
     *,
     now_ms: int | None = None,
+    price_tick: float | None = None,
 ) -> KlineFrame | None:
     """Build a snapshot for AI analysis: *n* newest **closed** bars only.
 
@@ -267,5 +268,6 @@ def build_analysis_frame(
         timeframe=timeframe,
         bars=tuple(rebased),
         indicators=indicators,
-        snapshot_ts_local_ms=now_local_ms(),
+        snapshot_ts_local_ms=int(now_ms) if now_ms is not None else now_local_ms(),
+        price_tick=price_tick,
     )

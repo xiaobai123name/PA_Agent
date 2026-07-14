@@ -412,6 +412,7 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
 ```
 
 说明：decision_trace 需输出完整决策路径（通常多条）；每条 trace 的 **bar_range 必须由你根据该节点实际使用的 K 线填写**，不得照抄示例。
+**阶段职责硬规则：Stage 1 的 §1–§2 已保存在 gate_trace，Stage 2 禁止复制这些节点。decision_trace 只能包含 §3–§10、§14；仅当阶段二确实重新判定方向时允许额外输出 §2.3。禁止输出 §11、§12–§13、§15 或自造节点。**
 **⚠️ bar_range 禁止出现 K0**（K0 是未收盘棒，不在 frame 中；如需讨论下一根 K 线写在 reason 里）。
 **每条 trace 的 answer 只能是以下五选一**：`是`、`否`、`中性`、`等待`、`不适用`。
 禁止写「部分符合」「部分是」「上涨通道」等；模糊或分类细节写在 **reason**（方向类节点可另填 **branch**）。
@@ -1540,6 +1541,7 @@ class PromptAssembler:
         use_prefix_chain: bool | None = None,
         structure_flip_cooldown_bars: int = 3,
         ignore_previous_context: bool = False,
+        extra_task_context: str = "",
     ) -> list[dict]:
         """Build Stage 2 messages, optionally chaining after Stage 1 for KV cache.
 
@@ -1566,6 +1568,7 @@ class PromptAssembler:
             omit_kline_block=chain_after_s1,
             structure_flip_cooldown_bars=structure_flip_cooldown_bars,
             ignore_previous_context=ignore_previous_context,
+            extra_task_context=extra_task_context,
         )
 
         if chain_after_s1:
@@ -1597,6 +1600,7 @@ class PromptAssembler:
         omit_kline_block: bool = False,
         structure_flip_cooldown_bars: int = 3,
         ignore_previous_context: bool = False,
+        extra_task_context: str = "",
     ) -> str:
         """Build the Stage 2 task turn for standalone or prefix-chain mode."""
         from pa_agent.ai.decision_continuity import (
@@ -1650,6 +1654,8 @@ class PromptAssembler:
                 )
             )
         stage2_parts.append(_STAGE2_OUTPUT_CONTRACT)
+        if extra_task_context.strip():
+            stage2_parts.append(extra_task_context.strip())
         if enable_next_bar_prediction:
             stage2_parts.append(_NEXT_BAR_PREDICTION_INSTRUCTION)
         else:

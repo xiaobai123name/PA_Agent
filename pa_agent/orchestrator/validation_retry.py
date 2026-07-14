@@ -2,16 +2,40 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 
 from pa_agent.ai.json_validator import Ok, ValidationError, coalesce_model_json_text
 from pa_agent.ai.retry_feedback import build_retry_feedback, parse_previous_for_cheat
-from pa_agent.ai.retry_policy import detect_cheat, should_retry
+from pa_agent.ai.retry_policy import detect_cheat, extract_feedback_targets, should_retry
 
 logger = logging.getLogger(__name__)
 
 StageName = Literal["stage1", "stage2"]
+
+
+@dataclass
+class ValidationAttempt:
+    stage: StageName
+    attempt: int
+    category: str
+    message: str
+    missing_fields: list[str]
+    invalid_fields: list[str]
+    raw_text: str
+    feedback: str | None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "stage": self.stage,
+            "attempt": self.attempt,
+            "category": self.category,
+            "message": self.message,
+            "missing_fields": list(self.missing_fields),
+            "invalid_fields": list(self.invalid_fields),
+            "raw_text": self.raw_text,
+            "feedback": self.feedback,
+        }
 
 
 @dataclass
@@ -21,6 +45,7 @@ class ValidationRetryResult:
     reply: Any
     attempts: int
     cheat_detected: bool = False
+    failures: list[ValidationAttempt] = field(default_factory=list)
 
 
 def append_assistant_turn(
@@ -81,6 +106,8 @@ def validate_with_retry(
     attempt = 0
     previous_raw: str | None = None
     previous_obj: dict[str, Any] | None = None
+    feedback_targets: set[str] = set()
+    failures: list[ValidationAttempt] = []
 
     while True:
         content = coalesce_model_json_text(
@@ -96,7 +123,12 @@ def validate_with_retry(
                     previous_obj,
                     **validate_kwargs,
                 )
-                cheats = detect_cheat(stage, before_norm, result.obj)
+                cheats = detect_cheat(
+                    stage,
+                    before_norm,
+                    result.obj,
+                    feedback_mentioned=feedback_targets,
+                )
                 if cheats:
                     logger.warning(
                         "%s retry cheat detected after attempt %d: %s",
@@ -104,18 +136,32 @@ def validate_with_retry(
                         attempt,
                         "; ".join(cheats),
                     )
-                    return ValidationRetryResult(
-                        result=ValidationError(
-                            category="c",
+                    cheat_error = ValidationError(
+                        category="c",
+                        stage=stage,
+                        raw_text=content,
+                        message="重试后篡改了不可变字段: " + "; ".join(cheats),
+                        invalid_fields=[f"cheat:{c}" for c in cheats],
+                    )
+                    failures.append(
+                        ValidationAttempt(
                             stage=stage,
+                            attempt=attempt + 1,
+                            category="c",
+                            message=cheat_error.message,
+                            missing_fields=[],
+                            invalid_fields=list(cheat_error.invalid_fields),
                             raw_text=content,
-                            message="重试后篡改了不可变字段: " + "; ".join(cheats),
-                            invalid_fields=[f"cheat:{c}" for c in cheats],
-                        ),
+                            feedback=None,
+                        )
+                    )
+                    return ValidationRetryResult(
+                        result=cheat_error,
                         messages=current_messages,
                         reply=current_reply,
                         attempts=attempt + 1,
                         cheat_detected=True,
+                        failures=failures,
                     )
             return ValidationRetryResult(
                 result=result,
@@ -126,43 +172,75 @@ def validate_with_retry(
                 ),
                 reply=current_reply,
                 attempts=attempt + 1,
+                failures=failures,
             )
 
         err = result
-        if not should_retry(
+        retry = should_retry(
             err.category,
             err.invalid_fields,
             err.missing_fields,
             attempt=attempt,
             settings=validation_settings,
-        ):
+            retryable_format=err.retryable_format,
+        )
+        feedback = None
+        if retry:
+            feedback = build_retry_feedback(
+                err,
+                stage=stage,
+                attempt=attempt + 1,
+                max_attempts=max_attempts,
+                frame=validate_kwargs.get("kline_frame"),
+                previous_raw=content,
+            )
+        failures.append(
+            ValidationAttempt(
+                stage=stage,
+                attempt=attempt + 1,
+                category=err.category,
+                message=err.message,
+                missing_fields=list(err.missing_fields),
+                invalid_fields=list(err.invalid_fields),
+                raw_text=content,
+                feedback=feedback,
+            )
+        )
+        if not retry:
             return ValidationRetryResult(
                 result=err,
                 messages=current_messages,
                 reply=current_reply,
                 attempts=attempt + 1,
+                failures=failures,
             )
 
         attempt += 1
-        logger.info(
-            "%s validation failed (category=%s), retry %d/%d",
-            stage,
-            err.category,
-            attempt,
-            max_attempts,
-        )
+        if getattr(validation_settings, "retry_mode", "standard") == "format_only":
+            logger.info(
+                "%s 格式校验失败，定向重试 %d/%d: %s",
+                stage,
+                attempt,
+                max_attempts,
+                err.message,
+            )
+        else:
+            logger.info(
+                "%s validation failed (category=%s), retry %d/%d",
+                stage,
+                err.category,
+                attempt,
+                max_attempts,
+            )
 
         previous_raw = content
         previous_obj = parse_previous_for_cheat(previous_raw)
-
-        feedback = build_retry_feedback(
-            err,
-            stage=stage,
-            attempt=attempt,
-            max_attempts=max_attempts,
-            frame=validate_kwargs.get("kline_frame"),
-            previous_raw=previous_raw,
+        feedback_targets = extract_feedback_targets(
+            err.invalid_fields,
+            err.missing_fields,
         )
+
+        assert feedback is not None
         preserve_mimo = False
         if provider_settings is not None:
             from pa_agent.ai.mimo_compat import (

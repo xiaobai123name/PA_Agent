@@ -37,6 +37,38 @@ def test_strip_fences_includes_repair():
     assert isinstance(obj["decision_trace"], list)
 
 
+def test_required_field_error_keeps_full_array_path():
+    validator = JsonValidator()
+    validator._schemas["stage1"] = {
+        "type": "object",
+        "required": ["bar_by_bar_summary"],
+        "properties": {
+            "bar_by_bar_summary": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["trapped_side"],
+                    "properties": {"trapped_side": {"type": "string"}},
+                },
+            }
+        },
+    }
+    payload = {
+        "bar_by_bar_summary": [
+            {"trapped_side": "none"},
+            {"trapped_side": "bulls"},
+            {"trapped_side": "none"},
+            {"trapped_side": "bears"},
+            {},
+        ]
+    }
+
+    result = validator.validate("stage1", json.dumps(payload))
+
+    assert isinstance(result, ValidationError)
+    assert result.missing_fields == ["bar_by_bar_summary[4].trapped_side"]
+
+
 # ── T2: Schema backward-compatibility tests ──────────────────────────────────
 
 

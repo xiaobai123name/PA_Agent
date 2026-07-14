@@ -59,6 +59,18 @@ class ValidationError:
     invalid_fields: list[str] = field(default_factory=list)
     allowed_values: dict[str, list] = field(default_factory=dict)
     message: str = ""
+    retryable_format: bool = False
+
+
+def _format_json_path(parts: Any) -> str:
+    """Render jsonschema paths with explicit array indexes."""
+    path = ""
+    for part in parts:
+        if isinstance(part, int):
+            path += f"[{part}]"
+        else:
+            path += ("." if path else "") + str(part)
+    return path
 
 
 Result = Ok | ValidationError
@@ -481,6 +493,7 @@ class JsonValidator:
                 stage=stage,
                 raw_text=raw_text,
                 message="Response is plain text, not JSON",
+                retryable_format=True,
             )
 
         # ── Category a: syntax error ──────────────────────────────────────────
@@ -530,6 +543,7 @@ class JsonValidator:
                         raw_text=raw_text,
                         parse_position=pos,
                         message=f"JSON syntax error at {pos}: {exc.msg}",
+                        retryable_format=True,
                     )
 
         if not isinstance(obj, dict):
@@ -538,8 +552,12 @@ class JsonValidator:
                 stage=stage,
                 raw_text=raw_text,
                 message="Top-level JSON value is not an object",
+                retryable_format=True,
             )
 
+        stage2_scope_errors = (
+            self._check_stage2_trace_scope(obj) if stage == "stage2" else []
+        )
         obj = self.normalize_parsed(
             stage,
             obj,
@@ -566,18 +584,24 @@ class JsonValidator:
 
         # Classify errors
         missing: list[str] = []
-        invalid: list[str] = []
+        format_invalid: list[str] = []
+        semantic_invalid: list[str] = []
         allowed: dict[str, list] = {}
 
         for err in errors:
-            path = ".".join(str(p) for p in err.absolute_path) or err.schema_path[-1]
+            path = _format_json_path(err.absolute_path)
             if err.validator == "required":
-                # Extract the missing property name from the message
-                missing.append(err.message.split("'")[1] if "'" in err.message else str(path))
+                missing_name = (
+                    err.message.split("'")[1] if "'" in err.message else ""
+                )
+                missing.append(
+                    f"{path}.{missing_name}" if path and missing_name else missing_name or path
+                )
             else:
-                invalid.append(str(path) or err.message[:80])
+                format_invalid.append(path or err.message[:80])
                 if "enum" in err.schema:
-                    allowed[str(path)] = err.schema["enum"]
+                    allowed[path] = err.schema["enum"]
+        format_invalid.extend(stage2_scope_errors)
 
         # ── Explicit cross-field checks ───────────────────────────────────────
         if stage == "stage1":
@@ -598,7 +622,7 @@ class JsonValidator:
                 )
 
                 for msg in validate_gate_result_consistency(obj):
-                    invalid.append(f"gate:{msg}")
+                    semantic_invalid.append(f"gate:{msg}")
                 for msg in validate_stage1_coherence(
                     obj,
                     kline_frame=kline_frame,
@@ -606,14 +630,14 @@ class JsonValidator:
                         self._validation, "strict_bar_by_bar_features", False
                     ),
                 ):
-                    invalid.append(f"s1:{msg}")
+                    semantic_invalid.append(f"s1:{msg}")
                 if incremental_new_bar_count > 0:
                     for msg in validate_incremental_stage1_coherence(
                         obj,
                         new_bar_count=incremental_new_bar_count,
                         previous_stage1=incremental_previous_stage1,
                     ):
-                        invalid.append(f"s1:{msg}")
+                        semantic_invalid.append(f"s1:{msg}")
             if getattr(self._validation, "trace_semantic_checks", False):
                 from pa_agent.ai.trace_semantic_checks import validate_trace_semantics
 
@@ -625,56 +649,56 @@ class JsonValidator:
                         stage="stage1",
                         gate_result=str(obj.get("gate_result", "")),
                     ):
-                        invalid.append(f"trace_semantic:{msg}")
+                        semantic_invalid.append(f"trace_semantic:{msg}")
 
         if stage == "stage2":
             no_order_err = self._check_no_order_invariant(obj)
             if no_order_err:
-                invalid.extend(no_order_err["fields"])
+                semantic_invalid.extend(no_order_err["fields"])
                 allowed.update(no_order_err["allowed"])
 
             breakout_err = self._check_breakout_order_basis(obj)
             if breakout_err:
-                invalid.extend(breakout_err["fields"])
+                semantic_invalid.extend(breakout_err["fields"])
                 allowed.update(breakout_err["allowed"])
 
             for msg in self._check_breakout_price_extreme(obj, kline_frame):
-                invalid.append(f"breakout_price:{msg}")
+                semantic_invalid.append(f"breakout_price:{msg}")
 
             for msg in self._check_program_owned_execution_trace(obj):
-                invalid.append(f"execution_trace:{msg}")
+                semantic_invalid.append(f"execution_trace:{msg}")
 
             for msg in self._check_signal_chain(
                 obj,
                 kline_frame,
                 lenient=norm_mode == "lenient",
             ):
-                invalid.append(f"signal_chain:{msg}")
+                semantic_invalid.append(f"signal_chain:{msg}")
 
             for msg in self._check_next_bar_prediction(obj):
-                invalid.append(msg)
+                semantic_invalid.append(msg)
 
             for msg in self._check_next_cycle_prediction(obj):
-                invalid.append(msg)
+                semantic_invalid.append(msg)
 
             for msg in self._check_trade_metrics(
                 obj,
                 decision_stance=decision_stance,
                 kline_frame=kline_frame,
             ):
-                invalid.append(f"metrics:{msg}")
+                semantic_invalid.append(f"metrics:{msg}")
 
             if getattr(self._validation, "stage2_coherence_checks", False):
                 from pa_agent.ai.decision_tree import validate_stage2_trace_consistency
                 from pa_agent.ai.coherence_checks import validate_stage2_coherence
 
                 for msg in validate_stage2_trace_consistency(obj):
-                    invalid.append(f"trace:{msg}")
+                    semantic_invalid.append(f"trace:{msg}")
                 if isinstance(stage1_json, dict):
                     for msg in validate_stage2_coherence(
                         obj, stage1_json, kline_frame=kline_frame
                     ):
-                        invalid.append(f"s2:{msg}")
+                        semantic_invalid.append(f"s2:{msg}")
             if getattr(self._validation, "trace_semantic_checks", False):
                 from pa_agent.ai.trace_semantic_checks import (
                     validate_stage2_order_trace_semantics,
@@ -688,10 +712,11 @@ class JsonValidator:
                         path_prefix="decision_trace",
                         stage="stage2",
                     ):
-                        invalid.append(f"trace_semantic:{msg}")
+                        semantic_invalid.append(f"trace_semantic:{msg}")
                 for msg in validate_stage2_order_trace_semantics(obj):
-                    invalid.append(f"trace_semantic:{msg}")
+                    semantic_invalid.append(f"trace_semantic:{msg}")
 
+        invalid = format_invalid + semantic_invalid
         if not errors and not missing and not invalid:
             return Ok(obj=obj)
 
@@ -712,7 +737,28 @@ class JsonValidator:
             invalid_fields=invalid,
             allowed_values=allowed,
             message=f"{len(errors)} schema error(s): {first_message}",
+            retryable_format=bool(format_invalid or missing) and not semantic_invalid,
         )
+
+    @staticmethod
+    def _check_stage2_trace_scope(obj: dict[str, Any]) -> list[str]:
+        """Reject Stage 1 and non-decision-tree nodes in raw Stage 2 output."""
+        trace = obj.get("decision_trace")
+        if not isinstance(trace, list):
+            return []
+        allowed = re.compile(r"^(?:2\.3|(?:[3-9]|10)\.\d+[A-Za-z]?|14(?:\.1)?)$")
+        errors: list[str] = []
+        for index, item in enumerate(trace):
+            if not isinstance(item, dict):
+                continue
+            node_id = str(item.get("node_id") or "").strip().lstrip("§")
+            if allowed.fullmatch(node_id):
+                continue
+            errors.append(
+                f"decision_trace[{index}].node_id={node_id!r} 超出 Stage 2 范围；"
+                "仅允许 3.x-10.x、14/14.1，方向重判时允许 2.3"
+            )
+        return errors
 
     @staticmethod
     def _check_no_order_invariant(obj: dict) -> dict | None:

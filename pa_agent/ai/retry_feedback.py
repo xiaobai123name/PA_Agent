@@ -25,6 +25,7 @@ _FORBIDDEN_STAGE1 = (
 _FORBIDDEN_STAGE2 = (
     "diagnosis_summary.cycle_position / direction（除非反馈明确要求）",
     "为通过校验把 order_type 从「不下单」改成下单（或反之）",
+    "未经反馈点名的 order_action、方向、entry、stop、TP1、TP2 和有效期",
     "交易者方程 10.3 的数值结论（须基于真实 entry/stop/target 重算）",
 )
 
@@ -109,6 +110,19 @@ def build_retry_feedback(
             "- §2.2：`answer` 只能用 **是/否/中性/等待/不适用**；"
             "「同向/冲突/背景中性」写在 `branch`（如 aligned / conflict / neutral_background），"
             "**禁止**把「冲突」写在 answer。"
+        )
+
+    if stage == "stage2" and any(
+        "超出 Stage 2 范围" in inv or "node_id" in inv
+        for inv in invalid
+    ):
+        lines.append("")
+        lines.append("**Stage 2 决策路径范围：**")
+        lines.append(
+            "- decision_trace 只能输出 §3–§10、§14；仅在方向重判时允许 §2.3。"
+        )
+        lines.append(
+            "- 禁止复制 Stage 1 的 §1–§2 gate_trace，禁止输出 §11、§12–§13 或未知节点。"
         )
 
     lines.append("")

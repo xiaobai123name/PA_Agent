@@ -66,7 +66,7 @@ def test_lenient_validator_accepts_pending_answer_synonym() -> None:
     obj["decision"]["estimated_win_rate"] = None
     obj["decision_trace"].append(
         {
-            "node_id": "13",
+            "node_id": "8.1",
             "question": "q",
             "answer": "待定",
             "reason": "x",
@@ -80,7 +80,7 @@ def test_lenient_validator_accepts_pending_answer_synonym() -> None:
         kline_frame=_frame(),
     )
     assert isinstance(result, Ok)
-    answers = [t["answer"] for t in result.obj["decision_trace"] if t.get("node_id") == "13"]
+    answers = [t["answer"] for t in result.obj["decision_trace"] if t.get("node_id") == "8.1"]
     assert answers == ["等待"]
 
 

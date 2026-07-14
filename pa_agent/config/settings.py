@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 DecisionStance = Literal["conservative", "balanced", "aggressive", "extreme_aggressive"]
 DataSourceKind = Literal["mt5", "tradingview", "akshare", "eastmoney", "tushare"]
 NormalizationMode = Literal["strict", "lenient"]
+RetryMode = Literal["standard", "format_only"]
 
 
 class AIProviderSettings(BaseModel):
@@ -49,6 +50,8 @@ class ValidationSettings(BaseModel):
     disable_truncation_repair: bool = False
     #: Re-call API with structured feedback when validation fails (format errors).
     retry_enabled: bool = True
+    #: standard uses the shared retry policy; format_only never retries semantic errors.
+    retry_mode: RetryMode = "standard"
     retry_max: int = Field(default=3, ge=0, le=5)
     #: Max retries for category=c semantic errors (subset only).
     retry_max_semantic: int = Field(default=1, ge=0, le=3)

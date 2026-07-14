@@ -199,7 +199,7 @@ def _build_empty_record(
     settings: Optional["Settings"],
 ) -> AnalysisRecord:
     """Build a partial AnalysisRecord with meta populated from the frame."""
-    ts_ms = now_local_ms()
+    ts_ms = int(getattr(frame, "snapshot_ts_local_ms", 0) or now_local_ms())
     ts_iso = datetime.fromtimestamp(ts_ms / 1000).isoformat(timespec="milliseconds")
 
     # Build masked provider snapshot
@@ -262,6 +262,7 @@ def _build_empty_record(
 def _accumulate_usage(current: dict, reply_usage: Any) -> dict:
     """Merge an AIUsage object into the running usage_total dict."""
     result = dict(current)
+    result["api_calls"] = result.get("api_calls", 0) + 1
     result["prompt_tokens"] = (
         result.get("prompt_tokens", 0) + getattr(reply_usage, "prompt_tokens", 0)
     )
@@ -281,8 +282,7 @@ def _accumulate_usage(current: dict, reply_usage: Any) -> dict:
 def _accumulate_usage_calls(current: dict, usage_calls: list[Any]) -> dict:
     total = dict(current)
     for usage in usage_calls:
-        if usage is not None:
-            total = _accumulate_usage(total, usage)
+        total = _accumulate_usage(total, usage)
     return total
 
 
@@ -319,6 +319,7 @@ class TwoStageOrchestrator:
         exp_reader: "ExperienceReader",
         settings: Optional["Settings"] = None,
         quote_provider: Callable[[str, str], Any] | None = None,
+        execution_now_ms_provider: Callable[[KlineFrame], int] | None = None,
     ) -> None:
         self._client = client
         self._assembler = assembler
@@ -328,6 +329,7 @@ class TwoStageOrchestrator:
         self._exp_reader = exp_reader
         self._settings = settings
         self._quote_provider = quote_provider
+        self._execution_now_ms_provider = execution_now_ms_provider
 
     def _validation_settings(self) -> Any:
         if self._settings is not None and hasattr(self._settings, "validation"):
@@ -352,6 +354,8 @@ class TwoStageOrchestrator:
         on_stage2_files: Callable[[list[str]], None] | None = None,
         previous_record: AnalysisRecord | None = None,
         incremental_new_bar_count: int | None = None,
+        stage2_extra_task_context: str = "",
+        force_stage2_on_gate_wait: bool = False,
     ) -> AnalysisRecord:
         """Run the two-stage analysis pipeline and return an AnalysisRecord.
 
@@ -568,6 +572,13 @@ class TwoStageOrchestrator:
         messages_s1 = vr_s1.messages
         reply_s1 = vr_s1.reply
         result_s1 = vr_s1.result
+        if vr_s1.failures:
+            record = record.model_copy(
+                update={
+                    "validation_attempts": record.validation_attempts
+                    + [failure.as_dict() for failure in vr_s1.failures]
+                }
+            )
         if vr_s1.attempts > 1:
             logger.info("Stage 1 validation succeeded after %d attempt(s)", vr_s1.attempts)
 
@@ -660,7 +671,7 @@ class TwoStageOrchestrator:
             on_stage2_files(list(strategy_files))
 
         gate_result = str(stage1_json.get("gate_result", "proceed")).lower()
-        if gate_result in ("wait", "unknown"):
+        if gate_result in ("wait", "unknown") and not force_stage2_on_gate_wait:
             from pa_agent.ai.decision_tree import build_stage2_gate_wait_response
 
             if on_stage_prompt is not None:
@@ -721,6 +732,7 @@ class TwoStageOrchestrator:
             provider_settings=getattr(self._settings, "provider", None),
             structure_flip_cooldown_bars=_flip_cooldown,
             ignore_previous_context=independent_analysis,
+            extra_task_context=stage2_extra_task_context,
         )
 
         # ── Step 15: Call AI for Stage 2 ──────────────────────────────────────
@@ -878,6 +890,13 @@ class TwoStageOrchestrator:
         messages_s2 = vr_s2.messages
         reply_s2 = vr_s2.reply
         result_s2 = vr_s2.result
+        if vr_s2.failures:
+            record = record.model_copy(
+                update={
+                    "validation_attempts": record.validation_attempts
+                    + [failure.as_dict() for failure in vr_s2.failures]
+                }
+            )
         if vr_s2.attempts > 1:
             logger.info("Stage 2 validation succeeded after %d attempt(s)", vr_s2.attempts)
 
@@ -939,6 +958,11 @@ class TwoStageOrchestrator:
             frame=frame,
             quote=quote,
             policy=execution_policy_from_settings(self._settings),
+            now_ms=(
+                self._execution_now_ms_provider(frame)
+                if self._execution_now_ms_provider is not None
+                else None
+            ),
         )
         review = stage2_json.get("decision", {}).get("execution_review", {})
         logger.info(

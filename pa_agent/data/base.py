@@ -77,6 +77,7 @@ class KlineFrame:
     bars: tuple[KlineBar, ...]
     indicators: IndicatorBundle
     snapshot_ts_local_ms: int   # milliseconds since epoch, local time
+    price_tick: float | None = None  # authoritative exchange tick when available
 
 
 # ── DataSource ABC ────────────────────────────────────────────────────────────

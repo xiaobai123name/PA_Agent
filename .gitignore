@@ -40,6 +40,15 @@ experience/**/*
 trade_records/*
 !trade_records/.gitkeep
 
+backtest_data/*
+!backtest_data/.gitkeep
+
+backtest_runs/*
+!backtest_runs/.gitkeep
+
+backtest_cache/*
+!backtest_cache/.gitkeep
+
 # ── 本地临时 / 解包产物（WorkBuddy、网关调试等）──────────────────────────────
 _tmp_wb_asar/
 _tmp_auth.js

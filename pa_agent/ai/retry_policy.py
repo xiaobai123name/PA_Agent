@@ -30,6 +30,18 @@ IMMUTABLE_FIELDS: dict[StageName, tuple[str, ...]] = {
 }
 
 IMMUTABLE_DIAG_SUMMARY: tuple[str, ...] = ("cycle_position",)
+IMMUTABLE_STAGE2_DECISION: tuple[str, ...] = (
+    "order_action",
+    "entry_intent",
+    "order_type",
+    "order_direction",
+    "entry_price",
+    "stop_loss_price",
+    "take_profit_price",
+    "take_profit_price_2",
+    "estimated_win_rate",
+    "order_valid_bars",
+)
 
 
 def max_retries_for_category(category: str, settings: Any) -> int:
@@ -53,10 +65,16 @@ def should_retry(
     *,
     attempt: int,
     settings: Any,
+    retryable_format: bool | None = None,
 ) -> bool:
     """Whether another API call is warranted."""
     if category == "e":
         return False
+    if getattr(settings, "retry_mode", "standard") == "format_only":
+        if not getattr(settings, "retry_enabled", True):
+            return False
+        limit = int(getattr(settings, "retry_max", 0) or 0)
+        return bool(retryable_format) and attempt < limit
     if attempt >= max_retries_for_category(category, settings):
         return False
     if category in ("a", "b", "d"):
@@ -125,6 +143,14 @@ def detect_cheat(
             a = asum.get(key)
             if b is not None and a is not None and str(b) != str(a):
                 violations.append(f"{path}: {b!r} → {a!r}")
+        for key in IMMUTABLE_STAGE2_DECISION:
+            path = f"decision.{key}"
+            if path in mentioned or key in mentioned:
+                continue
+            b = _get_path(before, path)
+            a = _get_path(after, path)
+            if b != a:
+                violations.append(f"{path}: {b!r} → {a!r}")
 
     return violations
 
@@ -134,6 +160,11 @@ def extract_feedback_targets(invalid_fields: list[str], missing_fields: list[str
     targets: set[str] = set()
     for raw in list(missing_fields or []) + list(invalid_fields or []):
         text = str(raw)
+        for path in re.findall(
+            r"[A-Za-z_]\w*(?:\[\d+\]|\.[A-Za-z_]\w*)+",
+            text,
+        ):
+            targets.add(path)
         for key in (
             "direction",
             "cycle_position",
@@ -142,7 +173,9 @@ def extract_feedback_targets(invalid_fields: list[str], missing_fields: list[str
             "order_type",
             "next_bar_prediction",
             "next_cycle_prediction",
+            *IMMUTABLE_STAGE2_DECISION,
         ):
             if key in text:
                 targets.add(key)
+                targets.add(f"decision.{key}")
     return targets

@@ -24,6 +24,43 @@ def test_empty_reason_ok_for_intermediate_node() -> None:
     assert not any("non-empty" in e for e in errs)
 
 
+def test_repeated_dash_placeholders_are_empty_for_optional_gate_nodes() -> None:
+    raw = {
+        "gate_result": "proceed",
+        "gate_trace": [
+            {
+                "node_id": "1.2",
+                "question": "是否能识别当前市场周期？",
+                "answer": "是",
+                "reason": "",
+                "bar_range": "K40-K1",
+            },
+            {
+                "node_id": "1.3",
+                "question": "当前市场是否极端混乱？",
+                "answer": "否",
+                "reason": "",
+                "bar_range": "K10-K1",
+            },
+            {
+                "node_id": "2.5",
+                "question": "当前惯性强度是否足够支撑趋势跟踪？",
+                "answer": "否",
+                "reason": "惯性不足，但闸门通过，进入阶段二评估等待方案。",
+                "bar_range": "K8-K1",
+            },
+        ],
+    }
+    out = normalize_stage1(raw, normalization_mode="strict")
+    errs = validate_trace_semantics(
+        out["gate_trace"],
+        path_prefix="gate_trace",
+        stage="stage1",
+        gate_result="proceed",
+    )
+    assert not any("boilerplate" in error or "duplicate reason" in error for error in errs)
+
+
 def test_empty_reason_fails_for_10_3() -> None:
     trace = [
         {
@@ -31,6 +68,20 @@ def test_empty_reason_fails_for_10_3() -> None:
             "question": "交易者方程是否成立？",
             "answer": "是",
             "reason": "   ",
+            "bar_range": "K1",
+        }
+    ]
+    errs = validate_trace_semantics(trace, path_prefix="decision_trace", stage="stage2")
+    assert any("non-empty" in e for e in errs)
+
+
+def test_dash_reason_fails_for_required_10_3() -> None:
+    trace = [
+        {
+            "node_id": "10.3",
+            "question": "交易者方程是否成立？",
+            "answer": "是",
+            "reason": "—",
             "bar_range": "K1",
         }
     ]

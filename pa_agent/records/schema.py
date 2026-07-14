@@ -6,7 +6,7 @@ alarm payloads, validation errors, and experience entries.
 
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class RecordMeta(BaseModel):
@@ -41,6 +41,7 @@ class AnalysisRecord(BaseModel):
     experience_loaded: list[dict]
     exception: Optional[dict]           # If error occurred: category + debug info
     usage_total: dict                   # Cumulative usage for audit
+    validation_attempts: list[dict] = Field(default_factory=list)
 
 
 class FollowupTurn(BaseModel):

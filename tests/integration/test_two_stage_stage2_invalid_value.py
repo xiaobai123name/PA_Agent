@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 
 from tests.fixtures.validators import schema_test_validator
 from pa_agent.ai.router import route_strategy_files
+from pa_agent.config.settings import Settings
 from pa_agent.orchestrator.two_stage import TwoStageOrchestrator
 from pa_agent.util.threading import CancelToken, OrchestratorEvent
 
@@ -67,3 +68,53 @@ def test_stage2_invalid_confidence(frame, pending_writer, assembler, exp_reader)
     assert OrchestratorEvent.Stage2Started in events
     assert OrchestratorEvent.Stage2Failed in events
     assert OrchestratorEvent.RecordSaved not in events
+
+
+def test_stage2_format_retry_records_attempt_and_api_calls(
+    frame, pending_writer, assembler, exp_reader
+):
+    bad_stage2 = copy.deepcopy(VALID_STAGE2)
+    bad_stage2["decision_trace"].append(
+        {
+            "node_id": "1.2",
+            "question": "是否能识别市场周期？",
+            "answer": "是",
+            "branch": "trading_range",
+            "reason": "重复了阶段一节点",
+            "bar_range": "K20-K1",
+        }
+    )
+    settings = Settings()
+    settings.validation.retry_mode = "format_only"
+    settings.validation.retry_max = 1
+    settings.validation.retry_enabled = True
+    settings.validation.retry_stage2 = True
+
+    client = MagicMock()
+    client.stream_chat.side_effect = [
+        make_reply(VALID_STAGE1),
+        _make_reply(bad_stage2),
+        _make_reply(VALID_STAGE2),
+    ]
+    orchestrator = TwoStageOrchestrator(
+        client=client,
+        assembler=assembler,
+        router=route_strategy_files,
+        validator=schema_test_validator(),
+        pending_writer=pending_writer,
+        exp_reader=exp_reader,
+        settings=settings,
+    )
+    events: list[OrchestratorEvent] = []
+
+    record = orchestrator.submit(frame, CancelToken(), events.append)
+
+    assert record.exception is None
+    assert OrchestratorEvent.Stage2Retry in events
+    assert len(record.validation_attempts) == 1
+    assert record.validation_attempts[0]["stage"] == "stage2"
+    assert "超出 Stage 2 范围" in " ".join(
+        record.validation_attempts[0]["invalid_fields"]
+    )
+    assert record.usage_total["api_calls"] == 3
+    assert client.stream_chat.call_count == 3
