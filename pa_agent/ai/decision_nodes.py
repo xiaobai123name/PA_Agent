@@ -1678,7 +1678,7 @@ def judge_signal_bar_length(sig: int, features: dict[int, Any]) -> NodeFill:
 
             f"K{sig} range_atr_ratio={ratio:.3f} > {SIGNAL_BAR_LONG_ATR_RATIO}，"
 
-            "信号棒过长，止损可能超过ATR 2倍，需用资金管理止损或放弃。"
+            "信号棒过长，结构止损可能超过ATR 2倍；保持结构止损并等待更小信号或放弃。"
 
         )
 

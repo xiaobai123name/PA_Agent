@@ -7,7 +7,8 @@ from typing import Any
 from pa_agent.util.trade_metrics import (
     compute_risk_reward,
     format_estimated_win_rate,
-    max_risk_reward_ratio,
+    high_rr_review_is_approved,
+    high_rr_review_required,
     min_risk_reward_ratio,
     passes_trader_equation,
 )
@@ -531,17 +532,22 @@ class DecisionPanel(QWidget):
                     and passes_trader_equation(win_pct, risk, reward)
                 )
                 min_rr = min_risk_reward_ratio(decision_stance)
-                max_rr = max_risk_reward_ratio()
+                review_required = high_rr_review_required(ratio)
+                review_approved = high_rr_review_is_approved(decision)
                 metrics_ok = (
                     ratio >= min_rr
-                    and (max_rr is None or ratio <= max_rr)
+                    and (not review_required or review_approved)
                     and (eq_ok if win_pct is not None else True)
                 )
                 eq_note = ""
                 if win_pct is not None:
                     eq_note = " · 方程通过" if eq_ok else " · 方程不通过"
+                review_note = ""
+                if review_required:
+                    review_note = " · 高RR复核通过" if review_approved else " · 高RR待复核"
                 self._rr_inline_label.setText(
-                    f"盈亏比  {rr['ratio_text']}（风险 {risk:.4g} / 回报 {reward:.4g}）{eq_note}"
+                    f"盈亏比  {rr['ratio_text']}（风险 {risk:.4g} / 回报 {reward:.4g}）"
+                    f"{eq_note}{review_note}"
                 )
                 rr_color = "#3fb950" if metrics_ok else "#f85149"
                 self._rr_inline_label.setStyleSheet(

@@ -63,6 +63,7 @@ _CSV_FIELDNAMES = [
     "watch_points",
     "risk_assessment",
     "invalidation_condition",
+    "high_rr_review",
     # ── Diagnosis summary ─────────────────────────────────────────────────────
     "diag_cycle_position",
     "diag_direction",
@@ -568,6 +569,7 @@ def _save_trade_record_impl(
         "watch_points": _j(_get(dec, "watch_points")),
         "risk_assessment": _get(dec, "risk_assessment"),
         "invalidation_condition": _get(dec, "invalidation_condition"),
+        "high_rr_review": _j(_get(dec, "high_rr_review")),
 
         "diag_cycle_position": _get(diag, "cycle_position"),
         "diag_direction": _get(diag, "direction"),

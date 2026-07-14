@@ -218,7 +218,7 @@ Al Brooks 的具体建议（做多侧）：
 
 第六步：计算利润目标
 - TP1（近端结构位）与 TP2（远端结构位，如 MM、通道对边）
-- 须 §10.3 交易者方程通过（RR≥1.0，基于 TP1）
+- 须 §10.3 交易者方程通过（RR≥1.0，基于 TP1；高 RR 需 high_rr_review 通过）
 
 第七步：制定应变计划
 - 若结构失效：写入 `invalidation_condition` 与 `watch_points`（非持仓操作）

@@ -363,7 +363,8 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
     "key_factors": [],
     "watch_points": [],
     "risk_assessment": "",
-    "invalidation_condition": ""
+    "invalidation_condition": "",
+    "high_rr_review": null
   },
   "diagnosis_summary": {
     "cycle_position": "",
@@ -476,32 +477,34 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
 - `decision_trace[10.3].reason` 中的入场/止损/目标数字必须与 `decision` 三价一致（勿用未写入 decision 的中间价）
 - 做多：风险点数 = entry − stop，回报点数 = take_profit_price − entry；做空：风险 = stop − entry，回报 = entry − take_profit_price
 - 盈亏比 = 回报 ÷ 风险（程序与界面只认此公式；reasoning 中写的 RR 必须与三价一致，否则校验失败）
-- **无盈亏比上限（模型侧）**：按结构自由定 entry / TP1 / TP2 / stop；**禁止**为凑 RR 而缩小 TP1 或贴噪音止损。程序会在 RR>1.5 时自动向外扩 stop（保持 TP1/TP2 不变）。
+- **盈亏比只做校验（模型与程序）**：按结构自由定 entry / TP1 / TP2 / stop；**禁止**为凑 RR 而缩小 TP1、贴噪音止损或放宽结构止损。RR 校验程序不会改写任何价格。
 - **定价顺序（推荐）**：
   1. 定 **entry**（结构位/边界/回撤位或突破极值±跳动）
-  2. 定 **take_profit_price（TP1）** 于最近有效结构目标（通道对边、区间对侧、前 swing 等）
-  3. 定 **take_profit_price_2（TP2）** 于更远结构目标（Measured Move、通道对边远端、区间翻测等）
-  4. 定 **stop_loss_price** 于结构失效位（信号棒/波段极点外 1 跳等）
-  5. 若按结构 stop 算得 RR = 回报÷风险 **> 1.5**：**保持 TP1/TP2 不变**；程序校验时会自动向外扩 stop（模型也可先自行扩 stop）
-  6. 若结构 stop 已是最宽合理位且 RR 仍 > 1.5：程序会自动扩 stop；只要 §10.3 交易者方程通过即可
-  7. 若结构 stop 导致 RR < 1.0：优先**收紧** stop 至更近的结构失效位，或调整 entry；**禁止**向外扩 stop；仍无法 ≥1.0 → reject
+  2. 确定唯一的**结构失效位**，加入明确的 tick 或 ATR 缓冲，定 **stop_loss_price**；止损不能由 RR 反推
+  3. 定 **take_profit_price（TP1）** 于最近有效结构目标（通道对边、区间对侧、前 swing 等）
+  4. 定 **take_profit_price_2（TP2）** 于更远结构目标（Measured Move、通道对边远端、区间翻测等）
+  5. 按三价计算 RR = 回报÷风险；RR **> 1.5** 时必须复核结构，填写 `high_rr_review`：只有结构止损、TP1 和胜率依据均成立时 `status="通过"`，否则 `status="拒绝"` 并不下单；程序不修改 stop 或 TP
+  6. RR **< 1.0** 或交易者方程不通过时，重新评估整套结构方案或拒绝；**不得**只为满足 RR 收紧/放宽 stop 或缩小 TP
+  7. 结构止损距离过大时等待更小结构信号或拒绝；本 Agent 不输出仓位，执行层如需调整仓位必须保留该结构止损
 - **TP1 / TP2 硬规则**：
   - 有下单时 `take_profit_price` 与 `take_profit_price_2` **均必填**；不下单时均为 null
   - 做多：stop < entry < take_profit_price < take_profit_price_2
   - 做空：take_profit_price_2 < take_profit_price < entry < stop
   - §10.3 交易者方程与 RR 校验**仅使用 take_profit_price（TP1）**；TP2 不得用于方程计算
-- 有下单时：盈亏比须 **≥ 1.0**（回报÷风险），且须满足 **胜率%×回报 > (100−胜率)%×风险**
+- 有下单时：盈亏比须 **RR ≥ 1.0**（回报÷风险）；RR>1.5 允许在 `high_rr_review.status="通过"` 且三项依据完整时下单，并须满足 **胜率%×回报 > (100−胜率)%×风险**
 - 不满足上述任一条 → **10.3 必须判「否」**，order_type=**不下单**，不得输出限价/突破/市价单
 - **10.3 通过之前**不得输出具体下单类型；**10.3 之后**才写 §11
 - 因方程不通过而放弃（已有三价方案）：terminal.node_id 应为 **10.3**，outcome=**reject**（有方案可拒，不用 wait）
 - 完成 10.3 后，必须把你在方程中使用的**胜率主观估计**写入 decision.estimated_win_rate（0–100 整数），并在 estimated_win_rate_reasoning 简要说明依据；**禁止**留空或仅从 trace 文字里暗示
+- RR>1.5 时，`high_rr_review` 必须包含 `status`、`stop_loss_basis`、`tp1_basis`、`win_rate_basis`；三项依据必须分别说明结构失效止损、最近有效 TP1 和胜率估计，任何一项缺失或不成立都必须拒绝
 
 **结构型止损 / 止盈质量规则（防止噪音内小单）：**
 - `stop_loss_price` 必须放在「本笔交易假设真正失效」的结构位之外，而不是为了通过 10.3 方程而贴近 EMA、K1 low/high、整数位或单根 K 线内部噪音。
 - 若止损只是在 EMA / 支撑 / 阻力外侧很近的位置，且没有越过明确 swing low/high、信号棒极点、通道边界失效位或区间边界失效位，则视为「噪音内止损」；§10.1 或 §10.2 应判「否」。
 - `take_profit_price`（TP1）应放在有结构依据的最近有效目标位，不要为了通过方程而选 K1 内部噪音位
 - `take_profit_price_2`（TP2）应为更远但有结构依据的目标（MM 投影、通道对边远端、区间高度翻测等）；必须满足做多 tp2>tp1、做空 tp2<tp1
-- 若结构止损合理但 RR < 1.0：收紧 stop 或调整 entry；**禁止**向外扩 stop；若仍 < 1.0 或方程不通过 → `order_type=不下单`
+- 若结构止损合理但 RR < 1.0：不得因 RR 收紧或放宽 stop；重新复核结构方案，若仍不满足 → `order_type=不下单`
+- 若 RR>1.5：不因比例本身拒绝，也不自动扩大/缩小止损；复核通过则保留原结构价格下单，复核不通过才拒绝
 - 计划型限价单只有在「结构失效位」和「目标结构位」都清晰时才可执行；宽通道 / 区间边界 setup 只是允许进入评估，不代表必须下单。
 
 **计划型限价优先级（背景与周期 > 独立信号棒）：**
@@ -1914,7 +1917,7 @@ class PromptAssembler:
             "- 若无强信号棒：§9.0=否，**必须** 继续写 **§9.0P** 并尝试背景限价三价。",
             "- §9.0P=是：signal_bar.bar=null、quality=invalid；entry_bar pending；"
             "三价写入 decision，不要只在 watch_points 写触发条件。",
-            "- 定价：先定结构 TP1/TP2，再定结构 stop；RR>1.5 时程序自动向外扩 stop（保持 TP 不变）。",
+            "- 定价：先定 entry，再定唯一结构失效位与缓冲 stop，随后定结构 TP1/TP2；RR>1.5 必须复核三项依据，通过则允许下单，程序不改写 stop。",
         ]
         if near_support is not None:
             lines.append(

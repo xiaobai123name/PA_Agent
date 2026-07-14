@@ -48,6 +48,12 @@ def _stage2_trade_obj(**decision_overrides) -> dict:
         "watch_points": [],
         "risk_assessment": "test",
         "invalidation_condition": "test",
+        "high_rr_review": {
+            "status": "通过",
+            "stop_loss_basis": "K2结构失效位外加缓冲",
+            "tp1_basis": "前方最近有效结构目标",
+            "win_rate_basis": "信号与背景结构支持55%",
+        },
         "entry_basis_bar": "K2",
         "entry_basis_extreme": "high",
         "entry_rule": "K2高点上方1跳动",
@@ -143,22 +149,84 @@ def test_good_trade_passes_aggressive_stance() -> None:
     assert not validate_order_trade_metrics(decision, decision_stance="aggressive")
 
 
-def test_high_rr_allowed_when_trader_equation_passes() -> None:
-    """2:1 reward is allowed when there is no upper RR cap."""
+def test_high_rr_passes_after_structural_review_without_mutating_stop() -> None:
+    """A reviewed high-RR setup is allowed and its structural stop stays unchanged."""
     decision = {
         "order_type": "限价单",
-        "order_direction": "做多",
-        "entry_price": 100.0,
-        "take_profit_price": 110.0,
-        "take_profit_price_2": 115.0,
-        "stop_loss_price": 95.0,
+        "order_direction": "做空",
+        "entry_price": 4038.0,
+        "take_profit_price": 4004.0,
+        "take_profit_price_2": 3980.0,
+        "stop_loss_price": 4050.0,
         "estimated_win_rate": 55,
+        "high_rr_review": {
+            "status": "通过",
+            "stop_loss_basis": "K6高点外加缓冲，价格失效后空头假设失效",
+            "tp1_basis": "4004为最近有效结构目标",
+            "win_rate_basis": "SPS回撤与背景结构支持55%",
+        },
     }
+    original_stop = decision["stop_loss_price"]
     errors = validate_order_trade_metrics(decision, decision_stance="aggressive")
     assert not errors
-    rr = compute_risk_reward(100.0, 110.0, 95.0, "做多")
+    assert decision["stop_loss_price"] == original_stop
+    rr = compute_risk_reward(4038.0, 4004.0, 4050.0, "做空")
     assert rr is not None
-    assert rr["ratio"] == 2.0
+    assert rr["ratio"] == 34.0 / 12.0
+
+
+def test_stage2_high_rr_is_allowed_after_review_without_widening_stop() -> None:
+    """The full stage-2 path allows reviewed high RR without changing the stop."""
+    obj = _stage2_trade_obj(take_profit_price=110.0, take_profit_price_2=115.0)
+    result = validator.validate(
+        "stage2",
+        json.dumps(obj),
+        decision_stance="aggressive",
+        kline_frame=_frame(),
+    )
+    assert isinstance(result, Ok)
+    assert result.obj["decision"]["order_type"] == "突破单"
+    assert result.obj["decision"]["stop_loss_price"] == 100.0
+    assert result.obj["terminal"]["outcome"] == "trade"
+
+
+def test_stage2_high_rr_without_review_is_rejected_without_widening_stop() -> None:
+    obj = _stage2_trade_obj(
+        take_profit_price=110.0,
+        take_profit_price_2=115.0,
+        high_rr_review=None,
+    )
+    result = validator.validate(
+        "stage2",
+        json.dumps(obj),
+        decision_stance="aggressive",
+        kline_frame=_frame(),
+    )
+    assert isinstance(result, Ok)
+    assert result.obj["decision"]["order_type"] == "不下单"
+    assert result.obj["decision"]["stop_loss_price"] is None
+    assert result.obj["terminal"]["outcome"] == "reject"
+
+
+def test_high_rr_missing_tp1_basis_is_rejected() -> None:
+    decision = {
+        "order_type": "限价单",
+        "order_direction": "做空",
+        "entry_price": 4038.0,
+        "take_profit_price": 4004.0,
+        "take_profit_price_2": 3980.0,
+        "stop_loss_price": 4050.0,
+        "estimated_win_rate": 55,
+        "high_rr_review": {
+            "status": "通过",
+            "stop_loss_basis": "K6高点外加缓冲",
+            "tp1_basis": "",
+            "win_rate_basis": "SPS结构支持55%",
+        },
+    }
+    errors = validate_order_trade_metrics(decision)
+    assert any("tp1_basis" in error for error in errors)
+    assert decision["stop_loss_price"] == 4050.0
 
 
 def test_stage2_validator_coerces_bad_rr_to_no_order() -> None:

@@ -78,10 +78,16 @@ def format_estimated_win_rate_reasoning(decision: dict[str, Any]) -> str:
     return str(decision.get("estimated_win_rate_reasoning", "") or "").strip()
 
 
-# Lower cap: reward must be at least equal to risk (1:1) for any stance.
+# Lower floor: reward must be at least equal to risk (1:1) for any stance.
 MIN_RISK_REWARD_RATIO = 1.0
-# Upper cap on TP1 reward:risk — enforced by widening stop, not by shrinking TP1.
+# Review threshold only. It is not an acceptance cap and never changes a price.
 MAX_TP1_RISK_REWARD_RATIO = 1.5
+
+_HIGH_RR_REVIEW_FIELDS = (
+    "stop_loss_basis",
+    "tp1_basis",
+    "win_rate_basis",
+)
 
 
 def min_risk_reward_ratio(decision_stance: str | None = None) -> float:
@@ -91,81 +97,64 @@ def min_risk_reward_ratio(decision_stance: str | None = None) -> float:
 
 
 def max_risk_reward_ratio() -> float | None:
-    """Maximum TP1 reward:risk after program stop adjustment."""
+    """Return the TP1 RR review threshold, not a maximum accepted RR."""
     return MAX_TP1_RISK_REWARD_RATIO
 
 
-def widen_stop_for_tp1_rr_cap(
-    entry: float,
-    take_profit: float,
-    stop_loss: float,
-    direction: object,
-    *,
-    tick: float | None = None,
-) -> float | None:
-    """Move stop outward so TP1 RR <= MAX_TP1_RISK_REWARD_RATIO (entry/TP unchanged).
-
-    Long: lower stop; short: raise stop. Returns None if geometry cannot be fixed.
-    """
-    import math
-
-    rr = compute_risk_reward(entry, take_profit, stop_loss, direction)
-    if rr is None:
-        return None
-    ratio = float(rr["ratio"])
-    if ratio <= MAX_TP1_RISK_REWARD_RATIO + 1e-9:
-        return stop_loss
-
-    reward = float(rr["reward"])
-    min_risk = reward / MAX_TP1_RISK_REWARD_RATIO
-    long = is_long_direction(direction)
-    t = tick if tick and tick > 0 else 0.0
-
-    if long is True:
-        new_stop = entry - min_risk
-        if t:
-            new_stop = math.floor(new_stop / t + 1e-12) * t
-        if new_stop >= entry:
-            return None
-        return new_stop
-    if long is False:
-        new_stop = entry + min_risk
-        if t:
-            new_stop = math.ceil(new_stop / t - 1e-12) * t
-        if new_stop <= entry:
-            return None
-        return new_stop
-    return None
+def high_rr_review_required(ratio: float) -> bool:
+    """Return whether an order needs explicit structural review evidence."""
+    return float(ratio) > MAX_TP1_RISK_REWARD_RATIO + 1e-9
 
 
-def adjust_decision_stop_for_tp1_rr_cap(
-    decision: dict[str, Any],
-    *,
-    kline_frame: Any = None,
-    tick: float | None = None,
-) -> bool:
-    """Widen stop_loss_price in-place when TP1 RR exceeds the program cap."""
-    if decision.get("order_type") not in ("限价单", "突破单", "市价单"):
+def high_rr_review_is_approved(decision: dict[str, Any]) -> bool:
+    """Return whether the decision contains a complete high-RR review."""
+    review = decision.get("high_rr_review")
+    if not isinstance(review, dict):
         return False
-    try:
-        entry = float(decision["entry_price"])
-        tp = float(decision["take_profit_price"])
-        sl = float(decision["stop_loss_price"])
-    except (TypeError, ValueError, KeyError):
+    if str(review.get("status", "")).strip() != "通过":
         return False
-
-    if tick is None and kline_frame is not None:
-        from pa_agent.util.price_tick import infer_price_tick_from_frame
-
-        tick = infer_price_tick_from_frame(kline_frame)
-
-    new_sl = widen_stop_for_tp1_rr_cap(
-        entry, tp, sl, decision.get("order_direction"), tick=tick
+    return all(
+        isinstance(review.get(field), str) and review[field].strip()
+        for field in _HIGH_RR_REVIEW_FIELDS
     )
-    if new_sl is None or abs(new_sl - sl) < 1e-12:
-        return False
-    decision["stop_loss_price"] = new_sl
-    return True
+
+
+def validate_high_rr_review(
+    decision: dict[str, Any],
+    ratio: float,
+) -> list[str]:
+    """Require explicit stop/TP1/win-rate evidence when RR is unusually high."""
+    if not high_rr_review_required(ratio):
+        return []
+
+    review = decision.get("high_rr_review")
+    if not isinstance(review, dict):
+        return [
+            "high RR requires decision.high_rr_review with structural stop, TP1, "
+            "and win-rate evidence; RR alone does not approve the order"
+        ]
+
+    errors: list[str] = []
+    status = str(review.get("status", "")).strip()
+    if status != "通过":
+        errors.append(
+            "high RR review is not approved; reject unless structural stop, TP1, "
+            "and win-rate evidence are all confirmed"
+        )
+
+    labels = {
+        "stop_loss_basis": "structural stop",
+        "tp1_basis": "TP1 structural target",
+        "win_rate_basis": "estimated win-rate",
+    }
+    for field in _HIGH_RR_REVIEW_FIELDS:
+        value = review.get(field)
+        if not isinstance(value, str) or not value.strip():
+            errors.append(
+                f"high RR review missing {labels[field]} evidence: "
+                f"decision.high_rr_review.{field}"
+            )
+    return errors
 
 
 def passes_trader_equation(
@@ -345,15 +334,15 @@ def validate_order_trade_metrics(
     decision_stance: str | None = None,
     kline_frame: Any = None,
     bar_analysis: dict[str, Any] | None = None,
-    apply_rr_cap_adjustment: bool = True,
 ) -> list[str]:
-    """Validate entry/TP/SL geometry, RR floor, and trader equation for live orders."""
+    """Validate trade geometry, RR floor, review evidence, and trader equation.
+
+    The stop is a structural invalidation price supplied by the decision. RR never
+    rewrites entry, TP1, TP2, or stop. High RR is allowed after explicit review.
+    """
     order_type = decision.get("order_type")
     if order_type not in ("限价单", "突破单", "市价单"):
         return []
-
-    if apply_rr_cap_adjustment:
-        adjust_decision_stop_for_tp1_rr_cap(decision, kline_frame=kline_frame)
 
     entry = decision.get("entry_price")
     tp = decision.get("take_profit_price")
@@ -375,17 +364,11 @@ def validate_order_trade_metrics(
     if ratio < min_rr:
         errors.append(
             f"decision prices: risk_reward {rr['ratio_text']} is below minimum "
-            f"{min_rr:.2f}:1 for this stance; adjust take_profit/stop_loss or set "
-            "order_type=不下单 with 10.3=否"
+            f"{min_rr:.2f}:1 for this stance; re-review the structural setup or set "
+            "order_type=不下单 with 10.3=否; stop_loss_price is not auto-adjusted"
         )
 
-    max_rr = max_risk_reward_ratio()
-    if max_rr is not None and ratio > max_rr + 1e-9:
-        errors.append(
-            f"decision prices: risk_reward {rr['ratio_text']} exceeds maximum "
-            f"{max_rr:.2f}:1 for TP1 after stop adjustment; set order_type=不下单 "
-            "with 10.3=否"
-        )
+    errors.extend(validate_high_rr_review(decision, ratio))
 
     win_rate = _parse_win_rate(decision.get("estimated_win_rate"))
     if win_rate is None:

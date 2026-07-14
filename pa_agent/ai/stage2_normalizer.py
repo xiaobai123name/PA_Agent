@@ -553,6 +553,7 @@ def _clear_decision_to_no_order(decision: dict[str, Any]) -> None:
         decision[field] = None
     decision["estimated_win_rate"] = None
     decision["estimated_win_rate_reasoning"] = None
+    decision["high_rr_review"] = None
     # trade_confidence / trade_confidence_reasoning: schema requires non-null values.
     # When the breaker forces 不下单, provide valid defaults.
     if decision.get("trade_confidence") is None:
@@ -737,7 +738,10 @@ def _coerce_decision_when_trade_metrics_fail(
     decision_stance: str | None = None,
     kline_frame: Any = None,
 ) -> bool:
-    """After breakout entry snap, reject orders that still fail RR / trader equation."""
+    """After breakout entry snap, reject orders that fail RR / trader equation.
+
+    Trade metrics are a gate only. The structural stop is never rewritten here.
+    """
     decision = out.get("decision")
     if not isinstance(decision, dict) or decision.get("order_type") not in _TRADE_ORDER_TYPES:
         return False
@@ -771,9 +775,12 @@ def _coerce_decision_when_trade_metrics_fail(
         terminal["node_id"] = "10.3"
         terminal.setdefault(
             "label",
-            "交易者方程/盈亏比未达标，不下单",
+            "交易方案复核未通过，不下单",
         )
-    logger.debug("Coerced decision to 不下单 (trade metrics: %s)", summary)
+    logger.debug(
+        "Coerced decision to 不下单 (trade metrics: %s; structural stop unchanged)",
+        summary,
+    )
     return True
 
 
@@ -1397,11 +1404,6 @@ def normalize_stage2(
             "breakout entry_price adjusted to basis extreme ± 1 tick (basis=%s)",
             decision.get("entry_basis_bar"),
         )
-    if isinstance(decision, dict):
-        from pa_agent.util.trade_metrics import adjust_decision_stop_for_tp1_rr_cap
-
-        if adjust_decision_stop_for_tp1_rr_cap(decision, kline_frame=kline_frame):
-            logger.debug("stop_loss widened to bring TP1 RR within program cap")
     _coerce_decision_when_trade_metrics_fail(
         out,
         decision_stance=decision_stance,

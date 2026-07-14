@@ -359,6 +359,17 @@ _DECISION_BASE: dict = {
         "watch_points": {"type": "array", "items": {"type": "string"}},
         "risk_assessment": {"type": "string"},
         "invalidation_condition": {"type": ["string", "null"]},
+        "high_rr_review": {
+            "type": ["object", "null"],
+            "properties": {
+                "status": {"type": "string", "enum": ["通过", "拒绝"]},
+                "stop_loss_basis": {"type": "string", "minLength": 1},
+                "tp1_basis": {"type": "string", "minLength": 1},
+                "win_rate_basis": {"type": "string", "minLength": 1},
+            },
+            "required": ["status", "stop_loss_basis", "tp1_basis", "win_rate_basis"],
+            "additionalProperties": False,
+        },
     },
     "allOf": [
         # 不下单 → all price fields and direction must be null
