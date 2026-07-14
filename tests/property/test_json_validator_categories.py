@@ -35,6 +35,7 @@ def _valid_stage1() -> dict:
 def _valid_stage2() -> dict:
     return {
         "decision": {
+            "entry_intent": "none",
             "order_direction": None,
             "order_type": "不下单",
             "entry_price": None,

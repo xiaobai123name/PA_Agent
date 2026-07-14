@@ -162,10 +162,6 @@ def test_normalize_stage2_ignore_previous_context_skips_continuity_guard(monkeyp
     from pa_agent.ai.stage2_normalizer import normalize_stage2
 
     monkeypatch.setattr(
-        "pa_agent.ai.stage2_normalizer._coerce_decision_when_trade_metrics_fail",
-        lambda *args, **kwargs: None,
-    )
-    monkeypatch.setattr(
         "pa_agent.ai.decision_nodes.DecisionNodeEngine.apply_stage2",
         staticmethod(lambda *args, **kwargs: None),
     )

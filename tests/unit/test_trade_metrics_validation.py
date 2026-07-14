@@ -31,9 +31,10 @@ def _frame() -> KlineFrame:
 
 def _stage2_trade_obj(**decision_overrides) -> dict:
     decision = {
+        "entry_intent": "breakout",
         "order_type": "突破单",
         "order_direction": "做多",
-        "entry_price": 102.1,
+        "entry_price": 103.0,
         "take_profit_price": 106.5,
         "take_profit_price_2": 112.0,
         "stop_loss_price": 100.0,
@@ -59,6 +60,23 @@ def _stage2_trade_obj(**decision_overrides) -> dict:
         "entry_rule": "K2高点上方1跳动",
     }
     decision.update(decision_overrides)
+    if "entry_intent" not in decision_overrides:
+        decision["entry_intent"] = {
+            "限价单": "pullback",
+            "突破单": "breakout",
+            "市价单": "immediate",
+            "不下单": "none",
+        }[decision["order_type"]]
+    if (
+        decision["order_direction"] == "做空"
+        and "take_profit_price_2" not in decision_overrides
+    ):
+        distance = abs(
+            float(decision["entry_price"]) - float(decision["take_profit_price"])
+        )
+        decision["take_profit_price_2"] = (
+            float(decision["take_profit_price"]) - distance
+        )
     return {
         "decision": decision,
         "diagnosis_summary": {
@@ -93,15 +111,8 @@ def _stage2_trade_obj(**decision_overrides) -> dict:
                 "reason": "test",
                 "bar_range": "K2-K1",
             },
-            {
-                "node_id": "11.1",
-                "question": "趋势？",
-                "answer": "是",
-                "reason": "test",
-                "bar_range": "K2-K1",
-            },
         ],
-        "terminal": {"node_id": "11.1", "outcome": "trade", "label": "test"},
+        "terminal": {"node_id": "10.3", "outcome": "trade", "label": "test"},
     }
 
 
@@ -202,10 +213,7 @@ def test_stage2_high_rr_without_review_is_rejected_without_widening_stop() -> No
         decision_stance="aggressive",
         kline_frame=_frame(),
     )
-    assert isinstance(result, Ok)
-    assert result.obj["decision"]["order_type"] == "不下单"
-    assert result.obj["decision"]["stop_loss_price"] is None
-    assert result.obj["terminal"]["outcome"] == "reject"
+    assert isinstance(result, ValidationError)
 
 
 def test_high_rr_missing_tp1_basis_is_rejected() -> None:
@@ -229,9 +237,10 @@ def test_high_rr_missing_tp1_basis_is_rejected() -> None:
     assert decision["stop_loss_price"] == 4050.0
 
 
-def test_stage2_validator_coerces_bad_rr_to_no_order() -> None:
+def test_stage2_validator_rejects_bad_rr_without_coercion() -> None:
     obj = {
         "decision": {
+            "entry_intent": "breakout",
             "order_type": "突破单",
             "order_direction": "做多",
             "entry_price": 4527.4,
@@ -285,27 +294,18 @@ def test_stage2_validator_coerces_bad_rr_to_no_order() -> None:
                 "reason": "wrong",
                 "bar_range": "K1",
             },
-            {
-                "node_id": "11.1",
-                "question": "趋势？",
-                "answer": "是",
-                "reason": "test",
-                "bar_range": "K1",
-            },
         ],
-        "terminal": {"node_id": "11.1", "outcome": "trade", "label": "test"},
+        "terminal": {"node_id": "10.3", "outcome": "trade", "label": "test"},
     }
     result = validator.validate(
         "stage2", json.dumps(obj), decision_stance="aggressive"
     )
-    assert isinstance(result, Ok)
-    assert result.obj["decision"]["order_type"] == "不下单"
-    assert result.obj["decision_trace"][0]["answer"] == "否"
-    assert result.obj["terminal"]["outcome"] == "reject"
+    assert isinstance(result, ValidationError)
+    assert obj["decision"]["order_type"] == "突破单"
 
 
-def test_stage2_validator_auto_fixes_breakout_entry_at_or_inside_basis_high() -> None:
-    """Entry at/below K2 high is bumped to high + 1 tick before breakout_price check."""
+def test_stage2_validator_rejects_breakout_entry_at_or_inside_basis_high() -> None:
+    """Entry at/below K2 high is rejected and never rewritten."""
     obj = _stage2_trade_obj(entry_price=101.5, take_profit_price=106.5, stop_loss_price=100.0)
     result = validator.validate(
         "stage2",
@@ -313,13 +313,12 @@ def test_stage2_validator_auto_fixes_breakout_entry_at_or_inside_basis_high() ->
         decision_stance="aggressive",
         kline_frame=_frame(),
     )
-    assert isinstance(result, Ok)
-    entry = result.obj["decision"]["entry_price"]
-    assert entry > 102.0
+    assert isinstance(result, ValidationError)
+    assert obj["decision"]["entry_price"] == 101.5
 
 
-def test_stage2_validator_normalizes_stale_entry_bar_to_pending() -> None:
-    """Lenient mode treats stale pending-entry variants as pending, not hard-fail."""
+def test_stage2_validator_rejects_stale_entry_bar() -> None:
+    """Stale entry state is exposed instead of rewritten to pending."""
     obj = _stage2_trade_obj()
     obj["bar_analysis"]["entry_bar"]["freshness"] = "stale"
     result = validator.validate(
@@ -328,17 +327,16 @@ def test_stage2_validator_normalizes_stale_entry_bar_to_pending() -> None:
         decision_stance="aggressive",
         kline_frame=_frame(),
     )
-    assert isinstance(result, Ok)
-    assert result.obj["bar_analysis"]["entry_bar"]["freshness"] == "pending"
+    assert isinstance(result, ValidationError)
 
 
 def test_stage2_validator_accepts_pending_limit_entry_bar() -> None:
     obj = _stage2_trade_obj(
         order_type="限价单",
         order_direction="做空",
-        entry_price=101.0,
-        take_profit_price=98.0,
-        stop_loss_price=103.0,
+        entry_price=105.0,
+        take_profit_price=101.0,
+        stop_loss_price=107.0,
         trade_confidence=65,
         estimated_win_rate=60,
         entry_basis_bar=None,
@@ -368,9 +366,9 @@ def test_stage2_validator_accepts_planned_limit_without_signal_bar() -> None:
     obj = _stage2_trade_obj(
         order_type="限价单",
         order_direction="做空",
-        entry_price=101.0,
-        take_profit_price=98.0,
-        stop_loss_price=103.0,
+        entry_price=105.0,
+        take_profit_price=101.0,
+        stop_loss_price=107.0,
         trade_confidence=50,
         trade_confidence_reasoning="极度激进档接受无信号棒瑕疵",
         estimated_win_rate=55,
@@ -425,9 +423,9 @@ def test_stage2_validator_accepts_planned_limit_invalid_tr_boundary_null() -> No
     obj = _stage2_trade_obj(
         order_type="限价单",
         order_direction="做空",
-        entry_price=101.0,
-        take_profit_price=98.0,
-        stop_loss_price=103.0,
+        entry_price=105.0,
+        take_profit_price=101.0,
+        stop_loss_price=107.0,
         trade_confidence=50,
         trade_confidence_reasoning="极度激进档接受无信号棒瑕疵",
         estimated_win_rate=55,
@@ -481,9 +479,9 @@ def test_stage2_validator_accepts_planned_limit_with_weak_signal_bar() -> None:
     obj = _stage2_trade_obj(
         order_type="限价单",
         order_direction="做空",
-        entry_price=101.0,
-        take_profit_price=98.0,
-        stop_loss_price=103.0,
+        entry_price=105.0,
+        take_profit_price=101.0,
+        stop_loss_price=107.0,
         trade_confidence=55,
         estimated_win_rate=52,
         entry_basis_bar=None,
@@ -545,7 +543,7 @@ def test_stage2_validator_rejects_strong_signal_without_signal_bar() -> None:
     assert any("signal_bar.bar" in f for f in result.invalid_fields)
 
 
-def test_stage2_validator_auto_fixes_pending_market_entry_bar() -> None:
+def test_stage2_validator_rejects_pending_market_entry_bar() -> None:
     obj = _stage2_trade_obj(
         order_type="市价单",
         entry_price=102.1,
@@ -567,8 +565,7 @@ def test_stage2_validator_auto_fixes_pending_market_entry_bar() -> None:
         decision_stance="aggressive",
         kline_frame=_frame(),
     )
-    assert isinstance(result, Ok)
-    assert result.obj["bar_analysis"]["entry_bar"]["bar"] == "K1"
+    assert isinstance(result, ValidationError)
 
 
 def test_stage2_validator_accepts_grounded_trade() -> None:

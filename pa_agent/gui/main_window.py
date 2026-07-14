@@ -1666,6 +1666,13 @@ class MainWindow(QMainWindow):
         """
         if bars:
             self._last_frame_ready_bars = list(bars)
+            quote_store = getattr(self._ctx, "quote_store", None)
+            if quote_store is not None:
+                quote_store.update_from_bars(
+                    self._symbol_combo.currentText().strip(),
+                    self._tf_combo.currentText().strip(),
+                    bars,
+                )
             from pa_agent.data.bar_close_wait import current_forming_ts
 
             ts = current_forming_ts(
@@ -1886,6 +1893,9 @@ class MainWindow(QMainWindow):
 
             # Persist last-used symbol/timeframe to settings
             settings = getattr(self._ctx, "settings", None)
+            quote_store = getattr(self._ctx, "quote_store", None)
+            if quote_store is not None:
+                quote_store.clear()
             if settings is not None:
                 settings.general.last_symbol = new_symbol
                 settings.general.last_timeframe = new_tf
@@ -3199,10 +3209,27 @@ class MainWindow(QMainWindow):
             self._bind_decision_tree(decision, stage1_diag or None)
             order = inner.get("order_type", "—")
             self._decision_badge.setText(f"决策: {order}")
-            if self._maybe_alert_order_opportunity(inner):
-                self._spawn_post_order_followup(inner, decision)
+            is_demo_mode = bool(getattr(self, "_demo_mode", False))
+            has_order_opportunity = self._has_order_opportunity(inner)
+            notification_requested = (
+                False
+                if is_demo_mode
+                else self._maybe_alert_order_opportunity(inner)
+            )
+            execution_review = inner.get("execution_review")
+            has_execution_attempt = (
+                isinstance(execution_review, dict)
+                and execution_review.get("status") in {"resolved", "rejected"}
+            )
+            if not is_demo_mode and (has_order_opportunity or has_execution_attempt):
+                self._spawn_post_execution_followup(
+                    inner,
+                    decision,
+                    save_trade=has_order_opportunity,
+                    send_notifications=notification_requested,
+                )
 
-            elif getattr(self, "_demo_mode", False):
+            elif is_demo_mode and not has_order_opportunity:
                 self._present_decision_flow_playback(force_play=True)
 
             # ── FlowBar: mark Stage 2 done ────────────────────────────────────
@@ -3799,8 +3826,15 @@ class MainWindow(QMainWindow):
             confidence_threshold=self._confidence_threshold(),
         )
 
-    def _spawn_post_order_followup(self, inner: dict, decision: dict) -> None:
-        """Run trade CSV/chart + notifications off the UI thread (can take seconds)."""
+    def _spawn_post_execution_followup(
+        self,
+        inner: dict,
+        decision: dict,
+        *,
+        save_trade: bool,
+        send_notifications: bool,
+    ) -> None:
+        """Persist execution results and optionally send order notifications."""
         import threading
 
         settings = getattr(self._ctx, "settings", None)
@@ -3818,26 +3852,43 @@ class MainWindow(QMainWindow):
 
         def _run() -> None:
             try:
-                from pa_agent.records.trade_logger import save_trade_record
+                from pa_agent.records.trade_logger import save_execution_audit
 
-                save_trade_record(
+                save_execution_audit(
                     decision_inner=inner,
                     stage2_full=decision,
-                    stage1_diagnosis=stage1_diag,
-                    frame=frame,
                     meta_symbol=meta_symbol,
                     meta_timeframe=meta_timeframe,
                     decision_stance=decision_stance,
                     model_name=model_name,
-                    structure_flip_cooldown_bars=int(
-                        getattr(settings.general, "structure_flip_cooldown_bars", 3) or 3
-                    )
-                    if settings is not None
-                    else 3,
                 )
             except Exception as exc:  # noqa: BLE001
-                logger.warning("Trade record logging failed: %s", exc)
+                logger.error("Execution audit logging failed: %s", exc, exc_info=True)
 
+            if save_trade:
+                try:
+                    from pa_agent.records.trade_logger import save_trade_record
+
+                    save_trade_record(
+                        decision_inner=inner,
+                        stage2_full=decision,
+                        stage1_diagnosis=stage1_diag,
+                        frame=frame,
+                        meta_symbol=meta_symbol,
+                        meta_timeframe=meta_timeframe,
+                        decision_stance=decision_stance,
+                        model_name=model_name,
+                        structure_flip_cooldown_bars=int(
+                            getattr(settings.general, "structure_flip_cooldown_bars", 3) or 3
+                        )
+                        if settings is not None
+                        else 3,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("Trade record logging failed: %s", exc, exc_info=True)
+
+            if not send_notifications:
+                return
             try:
                 from pa_agent.notify.feishu_notifier import send_order_signal as send_feishu_order
                 from pa_agent.notify.pushplus_notifier import send_order_signal as send_pushplus_order
@@ -3876,7 +3927,7 @@ class MainWindow(QMainWindow):
 
         threading.Thread(
             target=_run,
-            name="post-order-followup",
+            name="post-execution-followup",
             daemon=True,
         ).start()
 
@@ -4343,6 +4394,7 @@ class MainWindow(QMainWindow):
             pending_writer = getattr(self._ctx, "pending_writer", None)
             exp_reader = getattr(self._ctx, "exp_reader", None)
             settings = getattr(self._ctx, "settings", None)
+            quote_store = getattr(self._ctx, "quote_store", None)
 
             if any(
                 x is None
@@ -4359,6 +4411,7 @@ class MainWindow(QMainWindow):
                 pending_writer=pending_writer,
                 exp_reader=exp_reader,
                 settings=settings,
+                quote_provider=quote_store.get if quote_store is not None else None,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Could not build orchestrator: %s", exc)

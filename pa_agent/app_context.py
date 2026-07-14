@@ -16,6 +16,7 @@ class AppContext:
 
     # Data layer
     data_source: Any = None       # DataSource implementation
+    quote_store: Any = None       # LiveQuoteStore shared with the analysis worker
 
     # AI / orchestration layer
     client: Any = None            # DeepSeekClient
@@ -40,6 +41,7 @@ class AppContext:
         from pa_agent.util.event_bus import EventBus
         from pa_agent.util.mask_secret import mask_secret
         from pa_agent.data.factory import create_data_source, normalize_data_source_kind
+        from pa_agent.data.live_quote import LiveQuoteStore
         from pa_agent.ai.cursor_connector import is_openclaw_cs_model
         from pa_agent.ai.deepseek_client import DeepSeekClient
         from pa_agent.ai.prompt_assembler import PromptAssembler
@@ -75,6 +77,7 @@ class AppContext:
             getattr(settings.general, "last_data_source", "mt5")
         )
         data_source = create_data_source(ds_kind)
+        quote_store = LiveQuoteStore()
 
         # Subscribe to the last-used symbol/timeframe from settings
         try:
@@ -137,6 +140,7 @@ class AppContext:
             logger=app_logger,
             event_bus=event_bus,
             data_source=data_source,
+            quote_store=quote_store,
             client=client,
             assembler=assembler,
             router=router,

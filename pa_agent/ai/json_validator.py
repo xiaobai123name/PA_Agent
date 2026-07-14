@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -640,6 +641,9 @@ class JsonValidator:
             for msg in self._check_breakout_price_extreme(obj, kline_frame):
                 invalid.append(f"breakout_price:{msg}")
 
+            for msg in self._check_program_owned_execution_trace(obj):
+                invalid.append(f"execution_trace:{msg}")
+
             for msg in self._check_signal_chain(
                 obj,
                 kline_frame,
@@ -811,7 +815,7 @@ class JsonValidator:
 
     @staticmethod
     def _check_breakout_price_extreme(obj: dict, kline_frame: Any = None) -> list[str]:
-        """Numerically verify breakout entry is outside the cited bar extreme."""
+        """Require breakout entry to equal the cited extreme plus/minus one tick."""
         if kline_frame is None:
             return []
         decision = obj.get("decision", {})
@@ -830,19 +834,64 @@ class JsonValidator:
         except (TypeError, ValueError):
             return []
 
-        direction = decision.get("order_direction")
-        extreme = decision.get("entry_basis_extreme")
-        if direction == "做多" and extreme == "high" and entry <= float(bar.high):
+        from pa_agent.util.price_tick import (
+            breakout_entry_target,
+            infer_price_tick_from_frame,
+        )
+
+        tick = infer_price_tick_from_frame(kline_frame)
+        if tick is None:
+            return ["cannot infer minimum price tick from current K-line frame"]
+        direction = str(decision.get("order_direction") or "")
+        extreme = str(decision.get("entry_basis_extreme") or "")
+        target = breakout_entry_target(
+            direction=direction,
+            extreme=extreme,
+            basis_high=float(bar.high),
+            basis_low=float(bar.low),
+            tick=float(tick),
+        )
+        if target is None:
             return [
-                f"做多突破单 entry_price={entry:.6g} must be above "
-                f"K{basis}.high={float(bar.high):.6g}"
+                "entry_basis_extreme does not match breakout direction "
+                f"(direction={direction!r}, extreme={extreme!r})"
             ]
-        if direction == "做空" and extreme == "low" and entry >= float(bar.low):
+        if not math.isclose(entry, target, rel_tol=0.0, abs_tol=float(tick) / 10):
             return [
-                f"做空突破单 entry_price={entry:.6g} must be below "
-                f"K{basis}.low={float(bar.low):.6g}"
+                f"entry_price={entry:.8g} must equal cited extreme plus/minus one tick "
+                f"(expected {target:.8g}, tick={float(tick):.8g})"
             ]
         return []
+
+    @staticmethod
+    def _check_program_owned_execution_trace(obj: dict) -> list[str]:
+        """Reject AI-authored §11 nodes; ExecutionResolver owns that section."""
+        errors: list[str] = []
+        decision = obj.get("decision")
+        if isinstance(decision, dict) and decision.get("execution_review") is not None:
+            errors.append("decision.execution_review is program-owned and must be omitted")
+        trace = obj.get("decision_trace")
+        if isinstance(trace, list):
+            for index, item in enumerate(trace):
+                if not isinstance(item, dict):
+                    continue
+                node_id = str(item.get("node_id") or "").strip()
+                if node_id.startswith("11."):
+                    errors.append(
+                        f"decision_trace[{index}] node {node_id} is program-owned and must be omitted"
+                    )
+        terminal = obj.get("terminal")
+        if isinstance(terminal, dict):
+            terminal_node = str(terminal.get("node_id") or "").strip()
+            if terminal_node.startswith("11."):
+                errors.append(
+                    f"terminal.node_id {terminal_node} is program-owned; use 10.3 before execution resolution"
+                )
+            if terminal.get("outcome") == "trade" and terminal_node != "10.3":
+                errors.append(
+                    "terminal.node_id must be 10.3 for an AI trade proposal before execution resolution"
+                )
+        return errors
 
     @staticmethod
     def _check_next_cycle_prediction(obj: dict) -> list[str]:

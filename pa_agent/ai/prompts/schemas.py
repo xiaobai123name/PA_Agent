@@ -323,6 +323,7 @@ STAGE1_SCHEMA: dict = {
 _DECISION_BASE: dict = {
     "type": "object",
     "required": [
+        "entry_intent",
         "order_type",
         "reasoning",
         "diagnosis_confidence",
@@ -336,6 +337,10 @@ _DECISION_BASE: dict = {
         "risk_assessment",
     ],
     "properties": {
+        "entry_intent": {
+            "type": "string",
+            "enum": ["pullback", "breakout", "immediate", "none"],
+        },
         "order_direction": {"type": ["string", "null"]},
         "order_type": {
             "type": "string",
@@ -368,6 +373,46 @@ _DECISION_BASE: dict = {
                 "win_rate_basis": {"type": "string", "minLength": 1},
             },
             "required": ["status", "stop_loss_basis", "tp1_basis", "win_rate_basis"],
+            "additionalProperties": False,
+        },
+        "execution_review": {
+            "type": ["object", "null"],
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": ["resolved", "rejected", "not_applicable"],
+                },
+                "reason_code": {"type": "string", "minLength": 1},
+                "reason": {"type": "string", "minLength": 1},
+                "proposed_entry_intent": {
+                    "type": "string",
+                    "enum": ["pullback", "breakout", "immediate", "none"],
+                },
+                "proposed_order_type": {"type": ["string", "null"]},
+                "proposed_entry_price": {"type": ["number", "null"]},
+                "resolved_order_type": {
+                    "type": "string",
+                    "enum": ["限价单", "突破单", "市价单", "不下单"],
+                },
+                "market_price": {"type": ["number", "null"]},
+                "quote_timestamp_ms": {"type": ["integer", "null"]},
+                "quote_age_ms": {"type": ["integer", "null"], "minimum": 0},
+                "max_slippage": {"type": ["number", "null"], "minimum": 0},
+                "proposed_structure": {"type": "object"},
+            },
+            "required": [
+                "status",
+                "reason_code",
+                "reason",
+                "proposed_entry_intent",
+                "proposed_order_type",
+                "proposed_entry_price",
+                "resolved_order_type",
+                "market_price",
+                "quote_timestamp_ms",
+                "quote_age_ms",
+                "max_slippage",
+            ],
             "additionalProperties": False,
         },
     },

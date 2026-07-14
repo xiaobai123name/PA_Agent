@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from pa_agent.ai.json_validator import Ok
+from pa_agent.ai.json_validator import Ok, ValidationError
 from pa_agent.ai.pattern_routing import ensure_detected_patterns_coherent
 from pa_agent.ai.stage1_normalizer import normalize_stage1
 from pa_agent.ai.stage2_normalizer import normalize_stage2
@@ -58,7 +58,12 @@ def test_lenient_validator_accepts_pending_answer_synonym() -> None:
     obj["decision"]["order_direction"] = None
     obj["decision"]["entry_price"] = None
     obj["decision"]["take_profit_price"] = None
+    obj["decision"]["take_profit_price_2"] = None
     obj["decision"]["stop_loss_price"] = None
+    obj["decision"]["entry_basis_bar"] = None
+    obj["decision"]["entry_basis_extreme"] = None
+    obj["decision"]["entry_rule"] = None
+    obj["decision"]["estimated_win_rate"] = None
     obj["decision_trace"].append(
         {
             "node_id": "13",
@@ -79,7 +84,7 @@ def test_lenient_validator_accepts_pending_answer_synonym() -> None:
     assert answers == ["等待"]
 
 
-def test_lenient_validator_fixes_market_order_missing_entry_bar() -> None:
+def test_lenient_validator_rejects_market_order_missing_entry_bar() -> None:
     obj = _stage2_trade_obj(
         order_type="市价单",
         entry_price=102.1,
@@ -101,17 +106,16 @@ def test_lenient_validator_fixes_market_order_missing_entry_bar() -> None:
         decision_stance="aggressive",
         kline_frame=_frame(),
     )
-    assert isinstance(result, Ok), result
-    assert result.obj["bar_analysis"]["entry_bar"]["bar"] == "K1"
+    assert isinstance(result, ValidationError)
 
 
-def test_lenient_validator_maps_expired_freshness_on_pending_entry() -> None:
+def test_lenient_validator_rejects_expired_freshness_on_pending_entry() -> None:
     obj = _stage2_trade_obj(
         order_type="限价单",
         order_direction="做空",
-        entry_price=101.0,
-        take_profit_price=98.0,
-        stop_loss_price=103.0,
+        entry_price=105.0,
+        take_profit_price=101.0,
+        stop_loss_price=107.0,
         estimated_win_rate=55,
         entry_basis_bar=None,
         entry_basis_extreme=None,
@@ -130,8 +134,7 @@ def test_lenient_validator_maps_expired_freshness_on_pending_entry() -> None:
         decision_stance="aggressive",
         kline_frame=_frame(),
     )
-    assert isinstance(result, Ok), result
-    assert result.obj["bar_analysis"]["entry_bar"]["freshness"] == "pending"
+    assert isinstance(result, ValidationError)
 
 
 def test_lenient_validator_maps_openclaw_enum_slips() -> None:
@@ -159,15 +162,15 @@ def test_lenient_validator_maps_openclaw_enum_slips() -> None:
         "freshness": "fresh",
     }
     obj["terminal"] = {
-        "node_id": "11.4",
+        "node_id": "11.2",
         "outcome": "breakout_entry",
-        "label": "§11.4突破单-空头延续",
+        "label": "AI 不应输出程序专属 §11.2",
     }
     assert _normalize_stage2_enum_aliases(obj) is True
-    assert obj["decision"]["order_direction"] == "做空"
+    assert obj["decision"]["order_direction"] == "bearish"
     assert obj["bar_analysis"]["always_in"] == "neutral"
-    assert obj["terminal"]["outcome"] == "trade"
-    assert obj["bar_analysis"]["entry_bar"]["strength"] == "not_triggered"
+    assert obj["terminal"]["outcome"] == "breakout_entry"
+    assert obj["bar_analysis"]["entry_bar"]["strength"] == "pending"
 
     result = validator.validate(
         "stage2",
@@ -175,7 +178,7 @@ def test_lenient_validator_maps_openclaw_enum_slips() -> None:
         decision_stance="extreme_aggressive",
         kline_frame=_frame(),
     )
-    assert isinstance(result, Ok), result
+    assert isinstance(result, ValidationError)
 
 
 def test_lenient_validator_maps_action_and_limit_order_pending() -> None:
@@ -204,7 +207,7 @@ def test_lenient_validator_maps_action_and_limit_order_pending() -> None:
         "outcome": "action",
         "label": "限价做空",
     }
-    assert _normalize_stage2_enum_aliases(obj) is True
-    assert obj["decision"]["order_direction"] == "做空"
-    assert obj["terminal"]["outcome"] == "trade"
-    assert obj["bar_analysis"]["entry_bar"]["freshness"] == "pending"
+    assert _normalize_stage2_enum_aliases(obj) is False
+    assert obj["decision"]["order_direction"] == "bearish"
+    assert obj["terminal"]["outcome"] == "action"
+    assert obj["bar_analysis"]["entry_bar"]["freshness"] == "limit_order_pending"

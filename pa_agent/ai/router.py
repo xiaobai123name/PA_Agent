@@ -1,6 +1,6 @@
 """Strategy file router — maps Stage 1 diagnosis to strategy file list.
 
-Implements 使用说明 §11 routing table exactly.
+Routes market diagnoses to the corresponding strategy documents.
 This is a pure function: no side effects, no external state.
 """
 from __future__ import annotations

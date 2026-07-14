@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -14,7 +13,10 @@ from pa_agent.ai.json_validator import (
     _strip_fences,
 )
 
-_SAMPLE = Path(__file__).resolve().parents[2] / "tools" / "stage2_raw_sample.txt"
+_RAW_SAMPLE = (
+    '{"decision":{"entry_intent":"none","order_type":"不下单",'
+    '"reasoning":"价格在"在区间中部入场"风险高"},"decision_trace":[]}'
+)
 from tests.fixtures.validators import schema_test_validator
 
 _validator = schema_test_validator()
@@ -22,8 +24,7 @@ _validator = schema_test_validator()
 
 def test_stage2_raw_sample_repair_then_parse():
     """Broken stage-2 sample with inner quotes must parse after repair."""
-    raw = _SAMPLE.read_text(encoding="utf-8")
-    stripped = _strip_fences(raw)
+    stripped = _strip_fences(_RAW_SAMPLE)
     repaired = _repair_unescaped_quotes(stripped)
     obj = json.loads(repaired)
     assert obj["decision"]["order_type"] == "不下单"
@@ -32,8 +33,7 @@ def test_stage2_raw_sample_repair_then_parse():
 
 def test_strip_fences_includes_repair():
     """_strip_fences applies quote repair so json.loads succeeds directly."""
-    raw = _SAMPLE.read_text(encoding="utf-8")
-    obj = json.loads(_strip_fences(raw))
+    obj = json.loads(_strip_fences(_RAW_SAMPLE))
     assert isinstance(obj["decision_trace"], list)
 
 
@@ -44,6 +44,7 @@ def _valid_stage2_no_prediction() -> dict:
     """Minimal valid Stage 2 JSON without next_bar_prediction (legacy format)."""
     return {
         "decision": {
+            "entry_intent": "none",
             "order_type": "不下单",
             "order_direction": None,
             "entry_price": None,

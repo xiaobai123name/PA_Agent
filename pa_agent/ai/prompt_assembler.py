@@ -142,12 +142,11 @@ _STAGE2_TAIL_REMINDER = (
     "禁止调用 exec/Python/写文件等工具；算术在 JSON 推理字段内完成。\n"
     "若 token 紧张，优先保证 `content` 有 JSON，可缩短思考。\n"
     "⚠️ 禁止在 content 中只写思考过程或分隔符（如 ---输出JSON---）而不附 JSON——"
-    "这会导致校验直接失败。哪怕只输出最小骨架 {\"decision\":{\"order_type\":\"不下单\",...}} 也比没有强。\n\n"
+    "这会导致校验直接失败。哪怕只输出最小骨架 {\"decision\":{\"entry_intent\":\"none\",\"order_type\":\"不下单\",...}} 也比没有强。\n\n"
     "【⚠️ 输出前自检 — terminal.outcome 语义规则（在输出 JSON 前逐项确认）：】\n"
-    "1. §9.0=否 时，**必须先写 §9.0P** 评估背景限价；仅当 §9.0P 也=否 且无三价方案时，"
-    "terminal.outcome=wait（node_id=9.0P 或 9.0）。\n"
-    "   **禁止** §9.0=否 后直接 wait 而跳过 §9.0P/§10。\n"
-    "   §9.0=是（有合格信号棒）或 §9.0P=是（计划型限价）且有三价 → 继续 §10，不得因缺信号棒直接 wait。\n"
+    "1. 先选择唯一 entry_intent：pullback / breakout / immediate / none；不得设置默认类型。\n"
+    "   声明必须对应：pullback=限价单、breakout=突破单、immediate=市价单、none=不下单。\n"
+    "   任何依据缺失或触发已错过都用 none；禁止自动换成另一种订单。\n"
     "   禁止写 reject — 你没有东西可以拒绝（除非 §10.3 已有三价方案）。\n"
     "2. 你有入场方案（entry/stop/target 三价齐全），但 10.3 交易者方程不通过？\n"
     "   → 这才可以写 terminal.outcome=reject，node_id=\"10.3\"。\n"
@@ -251,7 +250,7 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
 
 **禁止在阶段一评估：**
 - **0.3**（交易者方程仅为原则；数值检验在阶段二 **10.3**）
-- **§9–§11**（入场、风险、下单均属阶段二）
+- **§9–§10、§14**（AI 负责入场结构与风险；§11 由程序解析）
 
 **逐K摘要硬规则：**
 - 必须输出 `bar_by_bar_summary`，**恰好 5 条**（分析窗口≥5根时），覆盖最近 **K5–K1** 每一根已收盘 K 线各 1 条。数据不足 5 根则覆盖全部已有 K 线（每条 1 根）。
@@ -295,7 +294,7 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
   - 阶段一 **gate_trace 最后一条**（gate_result=proceed 时须含「闸门通过」或「进入阶段二」；wait/unknown 时写明等待原因）
   - 阶段二 **§10.3** 交易者方程（须写方程用到的入场/止损/目标数字或胜率假设）
   - node_overrides 的说明写在 **override_reason**，不要求 trace.reason
-- bar_range、question、answer 仍必填；程序填充节点（§1.1/§2.3/§2.4/§9.1–§9.5/§11）由程序写入 reason，AI 不输出
+- bar_range、question、answer 仍必填；程序填充节点（§1.1/§2.3/§2.4/§9.1–§9.5）由程序写入 reason，AI 不输出；§11 完全由 ExecutionResolver 在校验后写入
 - **禁止在 gate_trace 中输出 node_id 为 "14.1" 的节点**：14.1（禁止行为扫描）由程序自动注入，AI 输出会导致重复节点和校验失败
 - **禁止在 gate_trace 中输出 `gate_end` / `gate_summary` / `summary` 等汇总节点**：`gate_result` 字段已表达 proceed/wait/unknown；闸门通过说明写在 **最后一条真实节点**（通常是 §2.5）的 reason 中，answer 只能用 是/否/中性/等待/不适用
 - 节点 2.4 / 2.5 的 question 须与决策树原文一致（含 Always In 空格、用「支持」而非仅改措辞）
@@ -344,6 +343,7 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
 ```json
 {
   "decision": {
+    "entry_intent": "pullback|breakout|immediate|none",
     "order_direction": "做多|做空|null（禁止写 bearish/bullish/short/long）",
     "order_type": "限价单|突破单|市价单|不下单",
     "entry_price": null,
@@ -404,7 +404,7 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
     }
   ],
   "terminal": {
-    "node_id": "11.2",
+    "node_id": "10.3",
     "outcome": "trade",
     "label": "..."
   }
@@ -442,18 +442,21 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
   做空方向则 `"branch": "bearish"`。**`branch` 字段必须填写且值必须与 `diagnosis_summary.direction` 完全一致**（`bullish` 或 `bearish`）。
 - 其他情况若未加 2.3 节点而 direction 不同，校验器**必定报错**。最稳妥的做法：**让 diagnosis_summary.direction 直接沿用阶段一的 direction 值**，只在有充分依据时才覆盖。
 
-## 阶段二决策路径（二元决策树 §3–§11、§14）
+## 阶段二决策路径（二元决策树 §3–§10、§14；§11 由程序解析）
 
 阶段一 gate_result=proceed 时，decision_trace 必须遵守**执行顺序**（可跳过不适用分支，但不可乱序）：
 
 1. **§3–§8** 按 cycle_position 走对应结构分支（尖峰/通道/区间/反转/楔形等）
-2. **§9 执行顺序（硬规则）**：§9.0（信号棒）→ 若否则 **§9.0P（背景限价，必填）** → §9.4/§9.6/§9.7（AI）→ §9.1–§9.5（程序填充）。
-   - **§9.0=否 不是终局**；必须评估 §9.0P 后才能决定 wait。
-   - **§9.0P=是** → 继续 §10/§11 尝试限价单；三价写入 decision，**禁止**只在 watch_points 写触发价。
+2. **§9 执行顺序（硬规则）**：§9.0（信号棒）→ 按真实 setup 选择入场意图 → §9.4/§9.6/§9.7（AI）→ §9.1–§9.5（程序填充）。
+   - `pullback`：等待价格回撤/反弹到结构位；声明 `order_type=限价单`。
+   - `breakout`：等待价格突破明确 K 线极值；声明 `order_type=突破单`。
+   - `immediate`：已有收盘确认，计划立即入场；声明 `order_type=市价单`。
+   - `none`：当前没有有效入场；声明 `order_type=不下单`。
+   - 不得因为某种方式填写困难而改成另一种方式；程序会用实时价格逐项核验，错误直接拒绝。
 3. **§9.0、§9.0P、§9.4、§9.6、§9.7 由 AI 判定**，须写入 decision_trace
    - **§9.1/§9.2/§9.3/§9.5 由程序填充，AI 不输出**（程序依据几何特征确定性判断）
 4. **§10** 风险收益（必须按序）：**10.1 止损明确 → 10.2 止损不过大 → 10.3 交易者方程**（勿编造具体手数、合约数或资金规模）
-5. **§11 下单方式由程序填充，AI 不输出**（程序依据 cycle_position 路由，仅当 10.3=是 且下单时填充）
+5. **§11 下单方式由程序填充，AI 不输出 trace 节点**。AI 只填写 `entry_intent`、对应的 `order_type` 声明和结构三价；程序依据实时价格关系确定最终方式，声明不一致时直接拒绝。
 6. **§14** 禁止行为清单：下单前快速扫描，触犯任一条 → order_type=不下单
    - **⚠️ §14 answer 语义硬规则（违反会被程序强制改为不下单）：**
      - `answer=是` = **触犯了禁止行为**（程序据此强制 order_type=不下单）
@@ -463,17 +466,17 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
    - 例：触犯了宽通道追突破 → `{"node_id":"14","answer":"是","reason":"触犯：宽通道中追突破，放弃入场，order_type=不下单"}`
 
 **node_overrides（可选，默认不输出）：**
-仅当你识别到程序规则未捕捉到的明确结构性依据时，在顶层 `node_overrides` 数组中提交覆盖（如改变 §9.2/§9.3/§11 路由）：
+仅当你识别到程序规则未捕捉到的明确结构性依据时，在顶层 `node_overrides` 数组中提交覆盖（仅限允许覆盖的 §9.2/§9.3 等节点）：
 ```json
 "node_overrides": [
   {"node_id": "9.3", "answer": "否", "override_reason": "信号棒虽ATR比值略超2，但止损结构合理，程序未考虑此场景"}
 ]
 ```
-约束：§9.1 为锁定节点不可覆盖；§11 可横向切换（限价/突破/市价），但「不下单」不能改为下单；不输出时请勿包含该字段。
+约束：§9.1 为锁定节点不可覆盖；§11 由 ExecutionResolver 独占，禁止提交 §11 override；不输出时请勿包含该字段。
 
 **交易者方程（10.3）规则：**
 - 必须使用 **decision 中已填写的 entry_price / stop_loss_price / take_profit_price** 做数值计算（**take_profit_price_2 不参与 §10.3**），**禁止**用 K 线收盘、信号棒极点间距或「计划中的 1.8 点/3 点」代替三价
-- **突破单须先定 entry 再定 stop/target**：按下方「极值±1跳动」公式写入 `entry_price` 后，再用这三价做 10.3；程序校验前会把错误的突破 entry **校正**为极值±跳动。校正后若盈亏比/方程仍不达标，**10.3 必须判否**且 `order_type=不下单`
+- **突破单须先定 entry 再定 stop/target**：按下方「极值±1跳动」公式写入 `entry_price` 后，再用这三价做 10.3；程序只校验，不会修改错误的突破 entry。数值不等于依据极值±1跳动时直接校验失败
 - `decision_trace[10.3].reason` 中的入场/止损/目标数字必须与 `decision` 三价一致（勿用未写入 decision 的中间价）
 - 做多：风险点数 = entry − stop，回报点数 = take_profit_price − entry；做空：风险 = stop − entry，回报 = entry − take_profit_price
 - 盈亏比 = 回报 ÷ 风险（程序与界面只认此公式；reasoning 中写的 RR 必须与三价一致，否则校验失败）
@@ -493,7 +496,7 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
   - §10.3 交易者方程与 RR 校验**仅使用 take_profit_price（TP1）**；TP2 不得用于方程计算
 - 有下单时：盈亏比须 **RR ≥ 1.0**（回报÷风险）；RR>1.5 允许在 `high_rr_review.status="通过"` 且三项依据完整时下单，并须满足 **胜率%×回报 > (100−胜率)%×风险**
 - 不满足上述任一条 → **10.3 必须判「否」**，order_type=**不下单**，不得输出限价/突破/市价单
-- **10.3 通过之前**不得输出具体下单类型；**10.3 之后**才写 §11
+- **10.3 通过之前**不得声明交易型 `order_type`；10.3 通过后只填写 `entry_intent` 和对应 `order_type` 声明，仍不得写 §11 trace
 - 因方程不通过而放弃（已有三价方案）：terminal.node_id 应为 **10.3**，outcome=**reject**（有方案可拒，不用 wait）
 - 完成 10.3 后，必须把你在方程中使用的**胜率主观估计**写入 decision.estimated_win_rate（0–100 整数），并在 estimated_win_rate_reasoning 简要说明依据；**禁止**留空或仅从 trace 文字里暗示
 - RR>1.5 时，`high_rr_review` 必须包含 `status`、`stop_loss_basis`、`tp1_basis`、`win_rate_basis`；三项依据必须分别说明结构失效止损、最近有效 TP1 和胜率估计，任何一项缺失或不成立都必须拒绝
@@ -507,35 +510,13 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
 - 若 RR>1.5：不因比例本身拒绝，也不自动扩大/缩小止损；复核通过则保留原结构价格下单，复核不通过才拒绝
 - 计划型限价单只有在「结构失效位」和「目标结构位」都清晰时才可执行；宽通道 / 区间边界 setup 只是允许进入评估，不代表必须下单。
 
-**计划型限价优先级（背景与周期 > 独立信号棒）：**
-- 阶段一 `gate_result=proceed` 且 `cycle_position` 为 broad_channel / trading_range / normal_channel / trending_tr 时，**默认先评估计划型限价（§9.0P）**。
-- **无独立信号棒（signal_bar.bar=null）** → §9.0=否，**必须**继续 §9.0P；若 §9.0P=是 则给出限价三价。
-- `direction=neutral`、K1 为 doji/inside/弱棒、或 `transition_risk=medium` **单独出现**时，仍应尝试 §9.0P 边界/回撤限价；仅当 **§10.1–10.3 无法通过** 或 **§14 触犯** 时才 `不下单`。
-- 禁止以「等下一根 K 确认信号棒」为由跳过 §9.0P——计划型限价本来就是等价格到位。
-- 仅当同时满足：**区间/通道中部（6.3=middle）**、**无结构锚点定 stop**、**K1 已穿过计划 entry/stop**、或 **barbwire 且无边界锚点** 时，才可在 §9.0P 判否。
-
-**低质量计划型限价降级规则（已弱化 — 仅作风控提醒，非默认不下单）：**
-- 以下情形**倾向降低 trade_confidence**，但**不自动**改为 `不下单`；若 10.3 通过且结构清晰，仍应输出限价单并在 reasoning 说明接受的瑕疵：neutral 方向、transition_risk 偏高、diagnosis_confidence<50、K1 弱棒无跟随、方程边际通过。
-- 只有 **10.3 不通过** 或 **§14 触犯** 时，才必须 `order_type=不下单`。
-
-**突破单不可用时的限价单备选路径（重要）：**
-- 当通道/趋势结构默认倾向突破单，但**当前没有合格突破入场**（信号棒失效、无跟随、极点不清晰、无法填写 entry_basis_bar/extreme、突破已错过等）时，**不要直接输出「不下单」**。
-- 若结构方向仍清晰，且能在**支撑/阻力/通道边界/EMA/前棒极点**附近设定限价 entry，并能给出清晰的**结构失效止损**与**有效结构目标**，且 **10.3 交易者方程可通过（数学期望为正）** → **应尝试 `order_type=限价单`**。
-- 限价备选典型场景：顺势回撤到结构位做多/做空、区间边界反弹/回落、宽通道靠边界挂单、突破测试失败后的反向结构位。
-- 限价单 `entry_basis_*` 可填 null；`signal_bar.bar` 可为 null（quality=invalid），须在 **§9.0P** 说明「计划型限价，等待回撤/反弹到位」；`entry_bar` 设 not_triggered/pending。
-- 仅当**突破与限价两种路径均无法**给出满足 §10.1–10.3 的三价方案时，才 `order_type=不下单`。
-
-**§9.0P 计划型限价（宽通道/区间/通道边界 — 无合格信号棒时的正式路径）：**
-- **§9.0** 只评「是否已有合格收盘信号棒」；无信号棒 → §9.0=否，**必须**写 **§9.0P**。
-- 当 cycle_position 为 **broad_channel / trading_range / normal_channel / trending_tr**，且价格靠近 **支撑/阻力/通道边界**（阶段一 support_levels/resistance_levels），或顺势 **回撤/反弹到结构位** 可挂限价时：
-  - **§9.0P 应判「是」**，reason 写明「计划型限价，等待回撤/反弹到位」；
-  - §9.0 同时写「否」（无合格信号棒）；
-  - `signal_bar.bar` 为 **null**，`quality=invalid` 或 **weak**；
-  - `entry_bar` 设 `strength=not_triggered`、`freshness=pending`；
-  - 继续 §10 定三价 → 10.3 通过 → `order_type=限价单`。
-- **禁止**因 K1 为 doji/弱棒/无跟随，就 §9.0P=否 后直接 `不下单`——应先尝试结构位限价。
-- **§9.0P=否/等待**：区间/通道 **中部**、`barbwire`/重叠区无边界锚点、无结构锚点定 stop、K1 已穿过计划 entry/stop、或 §14 触犯。
-- **direction=neutral 时**：§9.0P 默认 **wait**（禁止双边边界挂单）；仅 §9.0=是 且有合格顺向信号棒时可下单。
+**入场意图必须来自当前 setup，不设默认订单类型：**
+- `pullback`：结构明确要求等待更有利价格。做多 entry 必须低于实时价，做空 entry 必须高于实时价。
+- `breakout`：结构明确要求突破确认。做多 entry 必须在依据 K 高点上方，做空 entry 必须在依据 K 低点下方，并填写 `entry_basis_*`。
+- `immediate`：已有收盘确认且当前就应执行；不得写 pending，程序还会检查最新报价、报价年龄和允许偏差。
+- `none`：没有满足上述任一意图的结构，或信号已错过、价格关系错误、§10/§14 不通过。
+- **禁止静默换型**：突破依据缺失就拒绝突破方案；触发已越过就判错过；不能自动改成限价或市价。
+- cycle_position 只提供结构背景，不直接决定订单类型；同一个周期可以因不同触发状态产生不同方式。
 
 **宽通道 vs Always In（硬规则）：**
 - **禁止一切逆势**；宽通道仅顺 direction / Always In 一侧。
@@ -545,12 +526,12 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
 - **末端楔形 / 楔形反转 / 三推递减**（与主趋势同向）→ 意味反转*可能*发生：**禁止追顺势**、**禁止逆势三价**；`order_type=不下单`，仅 `watch_points`。
 - **楔形回撤**（与主趋势相反的楔形）→ 突破确认后可评估**顺主趋势**；若同时 `climax_risk` 或末端三推特征，**禁止追单**。
 
-**限价单 K1 新鲜度（计划型 pending 与已触发区分）**：
-- **计划型限价**（entry_bar.freshness=pending / not_triggered）：只检查 entry 相对 **K1.close** 的方向是否正确（做多 entry < close；做空 entry > close）。
+**pullback / 限价单新鲜度**：
+- `entry_intent=pullback` 时 entry_bar 必须 pending / not_triggered；先按 K1.close 检查方向，最终由程序用实时价复核（做多 entry < market；做空 entry > market）。
   - **禁止**因 K1 影线曾触及 entry 就判失效 — 限价等的是**未来**回撤/反弹。
   - K1 已触及 **stop** 仍必须 `不下单`。
 - **非计划型 / 已触发限价**：仍用完整 K1 high/low 对照（K1 已走过 entry 则 stale）。
-- 若 K1.close 已在 entry 错误一侧（买单 close 低于 entry、卖单 close 高于 entry）→ reprice 或 `不下单`。
+- 若 K1.close 已在 entry 错误一侧（买单 close 低于 entry、卖单 close 高于 entry）→ 当前方案 `不下单`；禁止自动 reprice。
 
 **突破单 entry_price 硬规则（程序会按 K 线表小数位推断最小跳动并校验）：**
 - order_type="突破单" 时，必须填写 decision.entry_basis_bar、decision.entry_basis_extreme、decision.entry_rule。
@@ -559,17 +540,17 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
 - **做空突破单 basis 必须是 low**：即使叙事是「反弹至高点做空」，突破单仍挂在依据 K 的 **低点下方** 突破位；禁止写 `entry_basis_extreme="high"`（与「限价在高点附近做空」不同）。
 - entry_rule 只写挂单位置规则（如「K1 高点上方 1 跳动」），**禁止**在 entry_rule 里重复 order_type/方向或写 `entry_price=` 公式串。
 - 突破单禁止使用 K 线实体中部、收盘价、EMA 或「约等于高点」作为 entry_price。
-- 若无法从 K 线表确定依据 K 的 high/low 或最小跳动，应 order_type="不下单"，勿编造中间价。
+- 若无法从 K 线表确定依据 K 的 high/low 或最小跳动，应 `entry_intent="none"`、`order_type="不下单"`，勿编造中间价或改成限价。
 - 限价单/市价单不使用 entry_basis_* 字段，可填 null。
 
 **§9 逐K信号链与新鲜度硬规则：**
-- §9.0–§9.7 必须引用 `bar_analysis.signal_bar.bar` 与阶段一 `bar_by_bar_summary` 中的对应 K 线；计划型限价时 `signal_bar.bar` 为 null，须在 **§9.0P**（非 §9.0）写明依据；`quality="invalid"`、`pattern="none"`。若限价单/突破单尚未触发，`bar_analysis.entry_bar.bar` 可为 null，但必须设 `strength="not_triggered"`、`freshness="pending"`，并在 9.7 写明“等待触发，尚无入场棒”。
-- **⚠️ 市价单 entry_bar 硬规则**：`order_type="市价单"` 代表基于当前已收盘棒立即入场，**不存在「等待触发」状态**。`entry_bar.bar` 必须填写信号棒（通常为 K1），`strength` 设为 `strong` 或 `weak`，`freshness` 设为 `fresh`，`follow_through` 设为 `true`。**禁止**市价单将 `entry_bar.bar` 填为 null 或将 `freshness` 填为 `pending`——这会导致校验失败。
+- §9.0–§9.7 必须引用 `bar_analysis.signal_bar.bar` 与阶段一 `bar_by_bar_summary` 中的对应 K 线。`pullback` 可在没有独立信号棒时使用结构依据，此时 `signal_bar.bar=null`；`pullback/breakout` 尚未触发时 entry_bar 必须 not_triggered/pending。
+- **⚠️ immediate / 市价单硬规则**：`entry_intent="immediate"` 代表基于已收盘确认立即入场，不存在 pending。`entry_bar.bar` 必须为具体 K 线，`freshness=fresh`、`follow_through=true`。程序随后读取最新形成中 K 线报价；报价过期或偏离 entry 超限时直接拒绝，不转成挂单。
 - **K 线序号约定**：K 数字越大表示越早的已收盘棒（K8 早于 K1）。信号棒通常比入场棒更早，故 signal_bar 的 K 序号 **大于** entry_bar 的 K 序号（例：K3 信号 → K1 入场）。
 - 如果信号棒之后已经出现 2–3 根无跟随、反向强 K、或 `entry_bar.freshness=stale|invalid`，不得继续把旧信号当作新的突破单依据。
-- 如果最新 K1 是 doji、弱入场棒、无跟随或反向确认，应降低 trade_confidence；但若 **计划型限价边界 setup（§9.0P=是）** 且周期/方向/结构位一致，**仍应继续 §10 并尝试限价单**，不要仅因 K1 不完美就 `不下单`。
+- 如果最新 K1 是 doji、弱入场棒、无跟随或反向确认，应降低 trade_confidence，并按真实结构判断是等待回撤、等待突破还是不下单；不得默认改走限价。
 - 当 `bar_analysis.signal_bar.quality=weak|invalid`，或已触发入场棒但 `entry_bar.follow_through=false` 时，若仍下单，必须在 §9 和 reasoning 中明确说明为何该弱点未使信号失效；否则应等待。挂单未触发时不得把 `follow_through=false` 当作失败跟随，应写 `pending`。
-- **计划型限价单**：quality=weak|invalid 且 entry_bar 为 pending 时，**不视为**必须观望；须在 **§9.0P** 判「是」并说明结构位/setup 依据。
+- `pullback` 在没有独立信号棒时必须明确说明结构位依据；结构依据不足就使用 `none`，不得补造限价方案。
 
 **⚠️ watch_points 与 stage1 risk_warning 一致性规则（必须遵守）：**
 - 阶段一 `risk_warning` 是风险警示，**watch_points 中的触发条件不得与其直接矛盾**。
@@ -590,7 +571,7 @@ terminal 必须与 order_type 一致（**decision 与 decision_trace 同步**）
 - 有下单 → outcome=trade，10.3 必须为「是」，decision 含有效三价
 - 不下单 → outcome=wait 或 reject，order_type=不下单，三价与 order_direction 均为 null
 - **禁止** decision 写突破单/限价单/市价单，同时 decision_trace 里 10.3=否 或 terminal=reject
-- **§14 是禁止行为扫描，不是成交终局节点**：若 §14 answer=否（未触犯）且有下单，terminal.node_id 应填最终 §11 下单节点（如 `11.2`/`11.3`）或 `10.3`，**禁止**填 `14`/`14.1`；只有 §14 answer=是（触犯）时才可作为拒绝/等待的终止原因，且必须 `order_type=不下单`。
+- **§14 是禁止行为扫描，不是成交终局节点**：若 §14 answer=否（未触犯）且有交易意图，AI 输出的 terminal.node_id 必须填 `10.3`；禁止填任何 §11 节点或 `14`/`14.1`。§11 与最终 terminal 由程序解析后生成；只有 §14 answer=是（触犯）时才可作为拒绝/等待的终止原因，且必须 `order_type=不下单`。
 
 **⚠️ terminal.node_id 和 outcome 的语义规则（必须区分以下两种情形）：**
 
@@ -598,13 +579,13 @@ terminal 必须与 order_type 一致（**decision 与 decision_trace 同步**）
 → `terminal.node_id = "10.3"`，`outcome = "reject"`
 → 典型表现：10.3 trace 里有具体数值计算，方程结果为负
 
-情形 B：**§9.0=否 且 §9.0P=否**（或 §10.1=否 因无止损锚点）
-→ `terminal.node_id = "9.0P"`（或 9.0），`outcome = "wait"`
+情形 B：**没有有效 entry_intent**（或 §10.1=否 因无止损锚点）
+→ `entry_intent="none"`、`terminal.node_id = "9.0"`，`outcome = "wait"`
 → **不能** terminal 在 10.3，因为从未有过可评估的交易方案
 → **不能** 写 outcome="reject"——拒绝一个不存在的方案在语义上是无意义的
 
-常见错误：§9.0=否 → **跳过 §9.0P** → §10.1=否 → terminal=10.3/reject
-正确做法：§9.0=否 时**必须先写 §9.0P**；仅当 §9.0P 也=否（或 §10.1 因无锚点=否）→ terminal.node_id=**9.0P**（或 9.0），outcome=**wait**；10.3 不应出现在 trace 里（或标 skipped=true）。**禁止**在未评估 §9.0P 时因 §9.0=否 直接 terminal=9.0。
+常见错误：突破依据缺失后改成限价，或触发已越过后改成市价追单。
+正确做法：当前意图不成立就 `entry_intent="none"` 并暴露原因；10.3 不应伪造另一个方案。
 
 阶段一 gate_result 为 wait/unknown 时：系统会短路，不应调用本阶段。
 
@@ -1636,13 +1617,13 @@ class PromptAssembler:
             continuity_block = render_continuity_prompt_block(continuity_ctx)
         conflict_block = self._render_trend_conflict_guidance(stage1_json)
         transition_block = self._render_transition_guidance(stage1_json)
-        planned_limit_block = self._render_planned_limit_hint(stage1_json, frame)
+        execution_intent_block = self._render_execution_intent_hint(stage1_json, frame)
         stage2_parts = [
             stance_block,
             continuity_block,
             conflict_block,
             transition_block,
-            planned_limit_block,
+            execution_intent_block,
             *(
                 self._load(name)
                 for name in stage2_user_task_txt_files(
@@ -1734,7 +1715,7 @@ class PromptAssembler:
         return (
             f"{_STAGE2_API_TASK_RULE}\n\n"
             "## 阶段二任务\n\n"
-            "你现在独立执行阶段二：交易决策、风险收益和下单方式评估（基于阶段一诊断结果）。\n"
+            "你现在独立执行阶段二：交易结构、风险收益和入场意图评估（基于阶段一诊断结果）；最终下单方式由程序解析。\n"
             "以下 JSON 是程序校验通过后的阶段一诊断结果，请以此为权威依据；"
             f"{kline_intro}"
             f"{stage2_context}\n\n"
@@ -1744,7 +1725,7 @@ class PromptAssembler:
             f"\n```\n\n"
             f"{kline_block}"
             f"{prev_pred_block + chr(10) if prev_pred_block else ''}"
-            f"请根据以上诊断和K线数据,按《二元决策.txt》§3–§11、§14 输出 JSON 决策结果"
+            f"请根据以上诊断和K线数据,按《二元决策.txt》§3–§10、§14 输出 JSON 决策结果；不要输出 §11 trace"
             f"(含 decision_trace 与 terminal)。\n"
             f"注意:如果判断不下单,entry_price、take_profit_price、take_profit_price_2、stop_loss_price、order_direction 必须全部为 null。\n\n"
             f"{_STAGE2_TAIL_REMINDER}"
@@ -1852,8 +1833,8 @@ class PromptAssembler:
             return None
 
     @staticmethod
-    def _render_planned_limit_hint(stage1_json: dict, frame: KlineFrame) -> str:
-        """Contextual hint when channel/range structure favors planned limit orders."""
+    def _render_execution_intent_hint(stage1_json: dict, frame: KlineFrame) -> str:
+        """Contextual guidance that does not preselect an execution method."""
         cycle = str(stage1_json.get("cycle_position", "") or "").strip().lower()
         if cycle not in (
             "broad_channel",
@@ -1909,25 +1890,24 @@ class PromptAssembler:
 
         direction = str(stage1_json.get("direction", "neutral") or "neutral").strip().lower()
         lines = [
-            "## §9.0 / §9.0P 计划型限价提示（程序根据阶段一结构生成）",
+            "## 入场意图提示（程序根据阶段一结构生成）",
             "",
-            "**优先级：市场周期 + 方向背景 > 独立信号棒。**",
-            f"- cycle_position=**{cycle}** → 默认优先考虑 **限价单**（§11），"
-            "尤其在通道/区间 **边界** 或 **顺势回撤/反弹结构位**（非中部）。",
-            "- 若无强信号棒：§9.0=否，**必须** 继续写 **§9.0P** 并尝试背景限价三价。",
-            "- §9.0P=是：signal_bar.bar=null、quality=invalid；entry_bar pending；"
-            "三价写入 decision，不要只在 watch_points 写触发条件。",
+            f"- cycle_position=**{cycle}** 只描述结构，不预设订单方式。",
+            "- 等结构位回撤/反弹才入场 → pullback；等 K 线极值突破 → breakout；",
+            "已有收盘确认且当前就应入场 → immediate；没有有效 setup → none。",
+            "- 程序会读取最新形成中 K 线报价，核验类型、价格关系、报价年龄和追价偏差。",
+            "- 条件不成立会直接拒绝，不会把一种意图改成另一种订单。",
             "- 定价：先定 entry，再定唯一结构失效位与缓冲 stop，随后定结构 TP1/TP2；RR>1.5 必须复核三项依据，通过则允许下单，程序不改写 stop。",
         ]
         if near_support is not None:
             lines.append(
                 f"- 价格靠近下方支撑 **{support_label}**（约 {near_support:.4f}）→ "
-                "可评估 **做多限价单**（回撤至支撑买入）。"
+                "等待该支撑再买入属于 pullback；已有确认且立即执行则独立评估 immediate。"
             )
         if near_resist is not None:
             lines.append(
                 f"- 价格靠近上方阻力 **{resist_label}**（约 {near_resist:.4f}）→ "
-                "可评估 **做空限价单**（反弹至阻力卖出）。"
+                "等待该阻力再卖出属于 pullback；已有确认且立即执行则独立评估 immediate。"
             )
         if near_support is None and near_resist is None:
             lines.append(
@@ -1936,7 +1916,7 @@ class PromptAssembler:
             )
         if direction == "neutral":
             lines.append(
-                "- 阶段一 direction=neutral：**§9.0P 默认 wait**（禁止双边边界挂单）。"
+                "- 阶段一 direction=neutral：没有单一方向结构时使用 entry_intent=none，禁止双边同时给方案。"
             )
         return "\n".join(lines) + "\n"
 

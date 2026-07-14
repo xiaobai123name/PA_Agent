@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from pa_agent.ai.json_validator import Ok
+from pa_agent.ai.json_validator import JsonValidator, Ok, ValidationError
 from pa_agent.ai.stage2_normalizer import (
     _normalize_closed_enum,
     _normalize_stage2_bar_analysis_enums,
@@ -47,13 +47,14 @@ def test_normalize_stage2_bar_analysis_enums_from_user_report() -> None:
     stage1 = {"bar_analysis": {"bar_type": "outside_bull"}}
     assert _normalize_stage2_bar_analysis_enums(out, stage1_json=stage1) is True
     assert out["bar_analysis"]["bar_type"] == "outside_bull"
-    assert out["bar_analysis"]["entry_bar"]["freshness"] == "invalid"
+    assert out["bar_analysis"]["entry_bar"]["freshness"].startswith("invalid（")
 
 
 def test_normalize_second_entry_type_null_passes_schema() -> None:
     """Models emit type=null when is_second_entry=false; schema requires string."""
     payload = {
         "decision": {
+            "entry_intent": "none",
             "order_type": "不下单",
             "order_direction": None,
             "entry_price": None,
@@ -122,6 +123,7 @@ def test_normalize_second_entry_type_null_passes_schema() -> None:
 def test_normalize_stage2_enum_annotations_passes_schema() -> None:
     payload = {
         "decision": {
+            "entry_intent": "none",
             "order_type": "不下单",
             "order_direction": None,
             "entry_price": None,
@@ -180,14 +182,14 @@ def test_normalize_stage2_enum_annotations_passes_schema() -> None:
     stage1 = {"bar_analysis": {"bar_type": "outside_bull"}}
     out = normalize_stage2(payload, stage1_json=stage1)
     assert out["bar_analysis"]["bar_type"] == "outside_bull"
-    assert out["bar_analysis"]["entry_bar"]["freshness"] == "invalid"
+    assert out["bar_analysis"]["entry_bar"]["freshness"].startswith("invalid（")
 
     result = schema_test_validator().validate(
         "stage2",
         json.dumps(out, ensure_ascii=False),
         stage1_json=stage1,
     )
-    assert isinstance(result, Ok)
+    assert isinstance(result, ValidationError)
 
 
 # ── _normalize_next_bar_prediction direct tests ──────────────────────────────
@@ -280,6 +282,7 @@ def test_normalize_decision_reasoning_truncation() -> None:
 
     obj = {
         "decision": {
+            "entry_intent": "none",
             "order_type": "不下单",
             "order_direction": None,
             "entry_price": None,
@@ -353,6 +356,7 @@ def test_normalize_stage2_with_prediction():
     """normalize_stage2 must call _normalize_next_bar_prediction."""
     obj = {
         "decision": {
+            "entry_intent": "none",
             "order_type": "不下单",
             "order_direction": None,
             "entry_price": None,
@@ -394,8 +398,8 @@ def test_normalize_stage2_with_prediction():
     assert pred["features_used"] == ["stage1_diagnosis"]
 
 
-def test_coerce_no_order_when_metrics_fail_after_breakout_entry_snap() -> None:
-    """Regression: wrong breakout entry snapped → RR/equation fail → 不下单."""
+def test_wrong_breakout_entry_is_not_rewritten_or_coerced() -> None:
+    """Wrong breakout pricing stays visible and fails validation."""
     frame = KlineFrame(
         symbol="XAUUSD",
         timeframe="1h",
@@ -426,6 +430,7 @@ def test_coerce_no_order_when_metrics_fail_after_breakout_entry_snap() -> None:
     )
     payload = {
         "decision": {
+            "entry_intent": "breakout",
             "order_direction": "做空",
             "order_type": "突破单",
             "entry_price": 10.72,
@@ -460,29 +465,17 @@ def test_coerce_no_order_when_metrics_fail_after_breakout_entry_snap() -> None:
                 "reason": "用10.72/10.84/10.50算RR约1.8",
                 "bar_range": "K2-K1",
             },
-            {
-                "node_id": "11.2",
-                "question": "通道回撤？",
-                "answer": "是",
-                "reason": "test",
-                "bar_range": "K2-K1",
-            },
         ],
-        "terminal": {"node_id": "11.2", "outcome": "trade", "label": "突破做空"},
+        "terminal": {"node_id": "10.3", "outcome": "trade", "label": "突破做空"},
     }
     out = normalize_stage2(
         payload,
         kline_frame=frame,
         decision_stance="extreme_aggressive",
     )
-    assert out["decision"]["order_type"] == "不下单"
-    assert out["decision"]["entry_price"] is None
-    # Node 10.3 should have answer=否 (now may not be first after §9 node injection)
-    trace_103 = next((n for n in out["decision_trace"] if n.get("node_id") == "10.3"), None)
-    assert trace_103 is not None, "node 10.3 should be in decision_trace"
-    assert trace_103["answer"] == "否"
-    assert out["terminal"]["node_id"] == "10.3"
-    assert out["terminal"]["outcome"] == "reject"
+    assert out["decision"]["order_type"] == "突破单"
+    assert out["decision"]["entry_price"] == 10.72
+    assert out["terminal"]["outcome"] == "trade"
 
     result = schema_test_validator().validate(
         "stage2",
@@ -490,13 +483,15 @@ def test_coerce_no_order_when_metrics_fail_after_breakout_entry_snap() -> None:
         decision_stance="extreme_aggressive",
         kline_frame=frame,
     )
-    assert isinstance(result, Ok)
+    assert isinstance(result, ValidationError)
+    assert any("breakout_price" in field for field in result.invalid_fields)
 
 
-def test_coerce_decision_when_103_no_but_prices_remain() -> None:
-    """Regression: model says 10.3=否 / terminal=reject but leaves 突破单 prices."""
+def test_103_reject_with_trade_prices_is_not_silently_coerced() -> None:
+    """Contradictory trade output remains intact and fails validation."""
     payload = {
         "decision": {
+            "entry_intent": "breakout",
             "order_direction": "做多",
             "order_type": "突破单",
             "entry_price": 10.88,
@@ -547,19 +542,19 @@ def test_coerce_decision_when_103_no_but_prices_remain() -> None:
     }
     out = normalize_stage2(payload)
     d = out["decision"]
-    assert d["order_type"] == "不下单"
-    assert d["entry_price"] is None
-    assert d["estimated_win_rate"] is None
-    assert out["terminal"]["node_id"] == "10.3"
+    assert d["order_type"] == "突破单"
+    assert d["entry_price"] == 10.88
+    assert out["terminal"]["node_id"] == "14.0"
 
     result = schema_test_validator().validate("stage2", json.dumps(out, ensure_ascii=False))
-    assert isinstance(result, Ok)
+    assert isinstance(result, ValidationError)
 
 
-def test_trade_terminal_14_repaired_to_order_node() -> None:
-    """§14 is a prohibition scan, not the terminal node for successful trades."""
+def test_trade_terminal_14_is_rejected_instead_of_repaired() -> None:
+    """§14 terminal errors stay visible until the model corrects them."""
     payload = {
         "decision": {
+            "entry_intent": "pullback",
             "order_direction": "做空",
             "order_type": "限价单",
             "entry_price": 100.0,
@@ -633,13 +628,6 @@ def test_trade_terminal_14_repaired_to_order_node() -> None:
                 "bar_range": "K1",
             },
             {
-                "node_id": "11.3",
-                "question": "是交易区间吗？",
-                "answer": "是",
-                "reason": "限价单",
-                "bar_range": "K1",
-            },
-            {
                 "node_id": "14.1",
                 "question": "是否触犯禁止行为？",
                 "answer": "否",
@@ -650,17 +638,19 @@ def test_trade_terminal_14_repaired_to_order_node() -> None:
         "terminal": {"node_id": "14.1", "outcome": "trade", "label": "限价做空"},
     }
     out = normalize_stage2(payload)
-    assert out["terminal"]["node_id"] == "11.3"
+    assert out["terminal"]["node_id"] == "14.1"
     assert out["terminal"]["outcome"] == "trade"
     assert out["decision"]["order_type"] == "限价单"
 
     result = schema_test_validator().validate("stage2", json.dumps(out, ensure_ascii=False))
-    assert isinstance(result, Ok)
+    assert isinstance(result, ValidationError)
+    assert any("terminal.node_id must be 10.3" in field for field in result.invalid_fields)
 
 
-def test_signal_bar_bumped_when_same_seq_as_entry() -> None:
+def test_signal_bar_same_seq_as_entry_is_not_silently_rewritten() -> None:
     obj = {
         "decision": {
+            "entry_intent": "breakout",
             "order_type": "突破单",
             "order_direction": "做空",
             "entry_price": 3.42,
@@ -700,13 +690,16 @@ def test_signal_bar_bumped_when_same_seq_as_entry() -> None:
         "terminal": {"node_id": "0", "outcome": "trade", "label": "t"},
     }
     out = normalize_stage2(obj)
-    assert out["bar_analysis"]["signal_bar"]["bar"] == "K2"
+    assert out["bar_analysis"]["signal_bar"]["bar"] == "K1"
+    errors = JsonValidator._check_signal_chain(out)
+    assert any("signal_bar must be older" in error for error in errors)
 
 
 def test_normalize_stage2_without_prediction_noop():
     """Legacy Stage 2 without prediction must normalize without error."""
     obj = {
         "decision": {
+            "entry_intent": "none",
             "order_type": "不下单",
             "order_direction": None,
             "entry_price": None,
@@ -741,6 +734,7 @@ def test_repair_next_bar_yinxian_singular_probability() -> None:
     """阴线 + probability shorthand from production failures must normalize."""
     obj = {
         "decision": {
+            "entry_intent": "none",
             "order_type": "不下单",
             "order_direction": None,
             "entry_price": None,
@@ -800,6 +794,7 @@ def test_validator_injects_next_bar_when_feature_disabled() -> None:
     """skip_next_bar=True must not skip schema-required injection during validate()."""
     payload = {
         "decision": {
+            "entry_intent": "none",
             "order_type": "不下单",
             "order_direction": None,
             "entry_price": None,
@@ -852,6 +847,7 @@ def test_normalize_stage2_skip_next_bar_ui_path_omits_injection() -> None:
     """UI replay with feature off should not synthesize next_bar for display."""
     obj = {
         "decision": {
+            "entry_intent": "none",
             "order_type": "不下单",
             "order_direction": None,
             "entry_price": None,
@@ -882,10 +878,11 @@ def test_normalize_stage2_skip_next_bar_ui_path_omits_injection() -> None:
     assert isinstance(out.get("next_cycle_prediction"), dict)
 
 
-def test_normalize_stage2_no_order_english_alias_passes_schema() -> None:
-    """Regression: OpenClaw emits order_type=no_order + terminal=wait."""
+def test_order_type_english_alias_is_not_silently_rewritten() -> None:
+    """Invalid order_type must stay visible and fail schema validation."""
     payload = {
         "decision": {
+            "entry_intent": "none",
             "order_type": "no_order",
             "order_direction": None,
             "entry_price": None,
@@ -965,13 +962,11 @@ def test_normalize_stage2_no_order_english_alias_passes_schema() -> None:
         },
     }
     out = normalize_stage2(payload)
-    assert out["decision"]["order_type"] == "不下单"
-    assert out["decision"]["estimated_win_rate_reasoning"] is None
-    assert out["bar_analysis"]["signal_bar"]["pattern"] == "none"
-    assert out["next_cycle_prediction"]["cycle"] == "trading_range"
+    assert out["decision"]["order_type"] == "no_order"
 
     result = schema_test_validator().validate(
         "stage2",
         json.dumps(out, ensure_ascii=False),
     )
-    assert isinstance(result, Ok)
+    assert isinstance(result, ValidationError)
+    assert "decision.order_type" in result.invalid_fields

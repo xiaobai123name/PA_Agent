@@ -6,11 +6,7 @@ import logging
 from typing import Any
 
 from pa_agent.ai.trace_normalize import normalize_stage2_traces
-from pa_agent.util.price_tick import (
-    normalize_breakout_basis_extreme,
-    normalize_breakout_entry_price,
-    parse_k_seq,
-)
+from pa_agent.util.price_tick import parse_k_seq
 
 logger = logging.getLogger(__name__)
 
@@ -33,103 +29,14 @@ _SIGNAL_BAR_QUALITY_ALIASES: dict[str, str] = {
     "无效": "invalid",
 }
 
-_ORDER_DIRECTION_ALIASES: dict[str, str] = {
-    "bearish": "做空",
-    "bullish": "做多",
-    "short": "做空",
-    "long": "做多",
-    "sell": "做空",
-    "buy": "做多",
-    "空头": "做空",
-    "多头": "做多",
-    "做空": "做空",
-    "做多": "做多",
-}
-
-_ENTRY_BAR_STRENGTH_ALIASES: dict[str, str] = {
-    "pending": "not_triggered",
-    "waiting": "not_triggered",
-    "triggered": "strong",
-    "not_triggered": "not_triggered",
-    "strong": "strong",
-    "weak": "weak",
-}
-
-_TERMINAL_OUTCOME_ALIASES: dict[str, str] = {
-    "action": "trade",
-    "execute": "trade",
-    "execution": "trade",
-    "place_order": "trade",
-    "breakout_entry": "trade",
-    "breakout": "trade",
-    "limit_entry": "trade",
-    "market_entry": "trade",
-    "entry": "trade",
-    "trade_entry": "trade",
-    "no_trade": "wait",
-    "no_order": "wait",
-    "wait": "wait",
-    "reject": "reject",
-    "trade": "trade",
-    "proceed": "proceed",
-}
-
-_ENTRY_BAR_FRESHNESS_ALIASES: dict[str, str] = {
-    "expired": "stale",
-    "old": "stale",
-    "aged": "stale",
-    "too_old": "stale",
-    # Freshness middle-grounds
-    "active": "fresh",
-    "ready": "fresh",
-    "new": "fresh",
-    "waiting": "pending",
-    # "K0_trigger" / "k0_trigger" means "awaiting entry trigger at K0" — effectively pending
-    "trigger": "pending",
-    "k0_trigger": "pending",
-    "limit_order_pending": "pending",
-    "limit_pending": "pending",
-    "order_pending": "pending",
-    "awaiting_fill": "pending",
-    "awaiting_trigger": "pending",
-}
-
 _BAR_TYPE_ENUM = frozenset({
     "trend_bull", "trend_bear", "doji", "inside",
     "outside_bull", "outside_bear", "flat", "other",
 })
-_ENTRY_BAR_FRESHNESS_ENUM = frozenset({"fresh", "pending", "stale", "invalid"})
-_ENTRY_BAR_STRENGTH_ENUM = frozenset({"strong", "weak", "not_triggered"})
 _SIGNAL_BAR_QUALITY_ENUM = frozenset({"strong", "medium", "weak", "invalid"})
 
 
 _TRADE_ORDER_TYPES = frozenset({"限价单", "突破单", "市价单"})
-
-_ORDER_TYPE_ALIASES: dict[str, str] = {
-    "no_order": "不下单",
-    "notrade": "不下单",
-    "no_trade": "不下单",
-    "hold": "不下单",
-    "skip": "不下单",
-    "none": "不下单",
-    "wait": "不下单",
-    "limit": "限价单",
-    "limit_order": "限价单",
-    "breakout": "突破单",
-    "breakout_order": "突破单",
-    "market": "市价单",
-    "market_order": "市价单",
-}
-_NO_ORDER_PRICE_FIELDS = (
-    "order_direction",
-    "entry_price",
-    "take_profit_price",
-    "take_profit_price_2",
-    "stop_loss_price",
-    "entry_basis_bar",
-    "entry_basis_extreme",
-    "entry_rule",
-)
 
 # Valid enum values for features_used in next_bar_prediction / next_cycle_prediction.
 # Must stay in sync with schemas.py _NEXT_BAR_PREDICTION / _NEXT_CYCLE_PREDICTION.
@@ -184,33 +91,6 @@ def _stage1_bar_analysis_bar_type(stage1_json: dict[str, Any] | None) -> str | N
     return _normalize_closed_enum(bar_analysis.get("bar_type"), _BAR_TYPE_ENUM)
 
 
-def _normalize_entry_bar_freshness(entry_bar: dict[str, Any]) -> bool:
-    raw = entry_bar.get("freshness")
-    mapped = _normalize_closed_enum(
-        raw,
-        _ENTRY_BAR_FRESHNESS_ENUM,
-        aliases=_ENTRY_BAR_FRESHNESS_ALIASES,
-    )
-    if mapped and mapped != raw:
-        entry_bar["freshness"] = mapped
-        return True
-    return False
-
-
-def _normalize_order_type_aliases(decision: dict[str, Any]) -> bool:
-    """Map English order_type slips (no_order, limit, …) to schema enums."""
-    raw = str(decision.get("order_type", "") or "").strip()
-    if not raw:
-        return False
-    key = raw.lower().replace(" ", "_").replace("-", "_")
-    mapped = _ORDER_TYPE_ALIASES.get(key) or _ORDER_TYPE_ALIASES.get(raw.lower())
-    if mapped and mapped != raw:
-        decision["order_type"] = mapped
-        logger.debug("order_type %r -> %r", raw, mapped)
-        return True
-    return False
-
-
 def _normalize_stage2_bar_analysis_enums(
     out: dict[str, Any],
     *,
@@ -228,20 +108,6 @@ def _normalize_stage2_bar_analysis_enums(
     if norm_bt and norm_bt != raw_bt:
         bar_analysis["bar_type"] = norm_bt
         changed = True
-
-    entry_bar = bar_analysis.get("entry_bar")
-    if isinstance(entry_bar, dict):
-        if _normalize_entry_bar_freshness(entry_bar):
-            changed = True
-        raw_strength = entry_bar.get("strength")
-        norm_strength = _normalize_closed_enum(
-            raw_strength,
-            _ENTRY_BAR_STRENGTH_ENUM,
-            aliases=_ENTRY_BAR_STRENGTH_ALIASES,
-        )
-        if norm_strength and norm_strength != raw_strength:
-            entry_bar["strength"] = norm_strength
-            changed = True
 
     signal_bar = bar_analysis.get("signal_bar")
     if isinstance(signal_bar, dict):
@@ -280,17 +146,6 @@ def _normalize_second_entry(second_entry: dict[str, Any]) -> bool:
     return True
 
 
-def _normalize_order_direction_value(raw: object) -> str | None:
-    if raw is None:
-        return None
-    text = str(raw).strip()
-    if not text:
-        return None
-    if text in ("做多", "做空"):
-        return text
-    return _ORDER_DIRECTION_ALIASES.get(text.lower())
-
-
 def _normalize_always_in_value(
     raw: object,
     *,
@@ -323,27 +178,6 @@ def _normalize_always_in_value(
     return None
 
 
-def _normalize_terminal_outcome_value(
-    raw: object,
-    *,
-    order_type: str | None = None,
-) -> str | None:
-    if raw is None:
-        return None
-    text = str(raw).strip()
-    if not text:
-        return None
-    key = text.lower().replace(" ", "_")
-    mapped = _TERMINAL_OUTCOME_ALIASES.get(key)
-    if mapped:
-        if order_type == "不下单" and mapped == "trade":
-            return "wait"
-        return mapped
-    if key in ("wait", "reject", "trade", "proceed"):
-        return key
-    return None
-
-
 def _normalize_stage2_enum_aliases(out: dict[str, Any]) -> bool:
     """Map common OpenClaw/Agent enum slips before schema validation."""
     changed = False
@@ -354,20 +188,6 @@ def _normalize_stage2_enum_aliases(out: dict[str, Any]) -> bool:
         else ""
     ) or None
 
-    decision = out.get("decision")
-    order_type = (
-        str(decision.get("order_type", "")).strip()
-        if isinstance(decision, dict)
-        else None
-    ) or None
-    if isinstance(decision, dict):
-        raw_dir = decision.get("order_direction")
-        mapped_dir = _normalize_order_direction_value(raw_dir)
-        if mapped_dir and mapped_dir != raw_dir:
-            decision["order_direction"] = mapped_dir
-            logger.debug("order_direction %r -> %r", raw_dir, mapped_dir)
-            changed = True
-
     bar_analysis = out.get("bar_analysis")
     if isinstance(bar_analysis, dict):
         raw_ai = bar_analysis.get("always_in")
@@ -377,17 +197,6 @@ def _normalize_stage2_enum_aliases(out: dict[str, Any]) -> bool:
         if mapped_ai and mapped_ai != raw_ai:
             bar_analysis["always_in"] = mapped_ai
             logger.debug("always_in %r -> %r", raw_ai, mapped_ai)
-            changed = True
-
-    terminal = out.get("terminal")
-    if isinstance(terminal, dict):
-        raw_outcome = terminal.get("outcome")
-        mapped_outcome = _normalize_terminal_outcome_value(
-            raw_outcome, order_type=order_type
-        )
-        if mapped_outcome and mapped_outcome != raw_outcome:
-            terminal["outcome"] = mapped_outcome
-            logger.debug("terminal.outcome %r -> %r", raw_outcome, mapped_outcome)
             changed = True
 
     return changed
@@ -418,7 +227,7 @@ def _ensure_decision_required_fields(
     if not isinstance(decision, dict):
         return False
     s1 = stage1_json or {}
-    changed = _normalize_order_type_aliases(decision)
+    changed = False
     if not isinstance(decision.get("key_factors"), list):
         decision["key_factors"] = []
         changed = True
@@ -495,292 +304,6 @@ def _truncate_decision_reasoning(decision: dict[str, Any]) -> bool:
             return True
         return False
     decision["reasoning"] = text[: DECISION_REASONING_MAX_LEN - 1] + "…"
-    return True
-
-
-def _trace_node_answer(trace: Any, node_id: str) -> str | None:
-    if not isinstance(trace, list):
-        return None
-    for item in trace:
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("node_id", "")).strip() == node_id:
-            return str(item.get("answer", "") or "").strip()
-    return None
-
-
-def _section14_violated(trace: Any) -> bool:
-    """Return True only when §14 answer is 是 AND the reason text confirms a violation.
-
-    Background: §14 question is "是否触犯禁止行为清单？"
-      answer=是  → violated (程序强制 order_type=不下单)
-      answer=否  → not violated (can proceed)
-
-    Some models incorrectly write answer=是 to mean "I completed the scan (no violations)".
-    To guard against this common mistake we cross-check the reason text: if it contains
-    explicit denial phrases (未触犯 / 未违反 / 无触犯 / 通过) we do NOT treat it as a
-    violation.  This is a safety hatch — the prompt now clearly specifies answer=否 for
-    the no-violation case, so future outputs should be correct.
-    """
-    _DENIAL_PHRASES = ("未触犯", "未违反", "无触犯", "无违规", "通过扫描", "扫描通过", "无禁止", "未触发")
-    if not isinstance(trace, list):
-        return False
-    for item in trace:
-        if not isinstance(item, dict):
-            continue
-        nid = str(item.get("node_id", "")).strip()
-        if not nid.startswith("14"):
-            continue
-        if str(item.get("answer", "")).strip() != "是":
-            continue
-        # answer=是: check reason for denial phrases before treating as violation
-        reason = str(item.get("reason", "") or "")
-        if any(phrase in reason for phrase in _DENIAL_PHRASES):
-            # AI wrote answer=是 but reason says no violation — ignore (AI used wrong answer)
-            logger.debug(
-                "_section14_violated: node %s answer=是 but reason contains denial phrase; "
-                "treating as NOT violated (AI should use answer=否 for no-violation)",
-                nid,
-            )
-            continue
-        return True
-    return False
-
-
-def _clear_decision_to_no_order(decision: dict[str, Any]) -> None:
-    decision["order_type"] = "不下单"
-    for field in _NO_ORDER_PRICE_FIELDS:
-        decision[field] = None
-    decision["estimated_win_rate"] = None
-    decision["estimated_win_rate_reasoning"] = None
-    decision["high_rr_review"] = None
-    # trade_confidence / trade_confidence_reasoning: schema requires non-null values.
-    # When the breaker forces 不下单, provide valid defaults.
-    if decision.get("trade_confidence") is None:
-        decision["trade_confidence"] = 0
-    if not isinstance(decision.get("trade_confidence_reasoning"), str) or not decision["trade_confidence_reasoning"]:
-        decision["trade_confidence_reasoning"] = "无入场计划，不存在交易信心"
-
-
-def _set_trace_node_answer(
-    trace: Any,
-    node_id: str,
-    answer: str,
-    *,
-    reason_suffix: str = "",
-) -> None:
-    if not isinstance(trace, list):
-        return
-    for item in trace:
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("node_id", "")).strip() != node_id:
-            continue
-        item["answer"] = answer
-        if reason_suffix:
-            base = str(item.get("reason", "") or "").strip()
-            item["reason"] = f"{base}{reason_suffix}".strip()
-        return
-
-
-def _coerce_decision_no_order(out: dict[str, Any]) -> bool:
-    """When trace/terminal reject a trade, clear decision prices (common model slip)."""
-    decision = out.get("decision")
-    if not isinstance(decision, dict):
-        return False
-    _normalize_order_type_aliases(decision)
-
-    terminal = out.get("terminal")
-    outcome = (
-        str(terminal.get("outcome", "")).strip()
-        if isinstance(terminal, dict)
-        else ""
-    )
-    order_type = decision.get("order_type")
-
-    if order_type not in _TRADE_ORDER_TYPES:
-        if outcome in ("wait", "reject") and order_type != "不下单":
-            _clear_decision_to_no_order(decision)
-            logger.debug("Coerced %r + terminal=%s to 不下单", order_type, outcome)
-            return True
-        return False
-
-    trace = out.get("decision_trace")
-
-    triggers: list[str] = []
-    if _trace_node_answer(trace, "10.3") == "否":
-        triggers.append("10.3=否")
-    if outcome in ("wait", "reject"):
-        triggers.append(f"terminal.outcome={outcome}")
-    if _section14_violated(trace):
-        triggers.append("§14触犯")
-
-    if not triggers:
-        return False
-
-    _clear_decision_to_no_order(decision)
-    logger.debug("Coerced decision to 不下单 (%s)", ", ".join(triggers))
-    return True
-
-
-def _repair_terminal_trade_node(out: dict[str, Any]) -> bool:
-    """A successful trade should not terminate at §14 (prohibition scan)."""
-    decision = out.get("decision")
-    terminal = out.get("terminal")
-    trace = out.get("decision_trace")
-    if not isinstance(decision, dict) or not isinstance(terminal, dict):
-        return False
-    if decision.get("order_type") not in _TRADE_ORDER_TYPES:
-        return False
-    if terminal.get("outcome") != "trade":
-        return False
-
-    node_id = str(terminal.get("node_id", "") or "").strip()
-    if not node_id.startswith("14"):
-        return False
-
-    replacement: str | None = None
-    if isinstance(trace, list):
-        for item in reversed(trace):
-            if not isinstance(item, dict):
-                continue
-            nid = str(item.get("node_id", "") or "").strip()
-            if nid.startswith("11."):
-                replacement = nid
-                break
-        if replacement is None:
-            for item in reversed(trace):
-                if not isinstance(item, dict):
-                    continue
-                if str(item.get("node_id", "") or "").strip() == "10.3":
-                    replacement = "10.3"
-                    break
-
-    if replacement is None:
-        replacement = "10.3"
-    terminal["node_id"] = replacement
-    logger.debug("terminal.node_id %r -> %r (trade cannot terminate at §14)", node_id, replacement)
-    return True
-
-
-def _normalize_market_order_entry_bar(
-    bar_analysis: dict[str, Any],
-    decision: dict[str, Any],
-) -> bool:
-    """Market orders need a concrete entry_bar; borrow signal_bar when model left it pending."""
-    if decision.get("order_type") != "市价单":
-        return False
-    entry_bar = bar_analysis.get("entry_bar")
-    signal_bar = bar_analysis.get("signal_bar")
-    if not isinstance(entry_bar, dict) or not isinstance(signal_bar, dict):
-        return False
-    if entry_bar.get("bar") is not None:
-        return False
-    sig_bar = signal_bar.get("bar")
-    if not sig_bar:
-        return False
-    # Market order fills on the latest closed bar; signal_bar stays older (K2+).
-    entry_bar["bar"] = str(bar_analysis.get("last_closed_bar") or "K1").strip() or "K1"
-    raw_strength = str(entry_bar.get("strength") or signal_bar.get("quality") or "weak").strip().lower()
-    strength_map = {"strong": "strong", "medium": "weak", "weak": "weak", "low": "weak", "high": "strong"}
-    entry_bar["strength"] = strength_map.get(raw_strength, "weak")
-    entry_bar["freshness"] = "fresh"
-    entry_bar["follow_through"] = True
-    entry_bar["still_valid"] = entry_bar.get("still_valid", True)
-    logger.debug("market order: entry_bar.bar set from signal_bar %s", sig_bar)
-    return True
-
-
-def _normalize_signal_entry_bar_chain(bar_analysis: dict[str, Any], decision: dict[str, Any]) -> bool:
-    """Signal K must be strictly older than entry K (larger seq); pending entry exempt."""
-    if decision.get("order_type") not in _TRADE_ORDER_TYPES:
-        return False
-    signal_bar = bar_analysis.get("signal_bar")
-    entry_bar = bar_analysis.get("entry_bar")
-    if not isinstance(signal_bar, dict) or not isinstance(entry_bar, dict):
-        return False
-
-    strength = str(entry_bar.get("strength", "") or "").strip().lower()
-    freshness = str(entry_bar.get("freshness", "") or "").strip().lower()
-    pending = (
-        strength == "not_triggered"
-        or not entry_bar.get("bar")
-        or freshness in ("pending", "stale", "invalid")
-    )
-    if pending:
-        entry_bar["bar"] = None
-        entry_bar["strength"] = "not_triggered"
-        entry_bar.setdefault("freshness", "pending")
-        if entry_bar.get("follow_through") in (None, "", False):
-            entry_bar["follow_through"] = "pending"
-        return False
-
-    signal_seq = parse_k_seq(signal_bar.get("bar"))
-    entry_seq = parse_k_seq(entry_bar.get("bar"))
-    if signal_seq is None or entry_seq is None:
-        return False
-    if signal_seq > entry_seq:
-        return False
-
-    signal_bar["bar"] = f"K{entry_seq + 1}"
-    logger.debug(
-        "signal_bar K%s -> K%s (must be older than entry K%s)",
-        signal_seq,
-        entry_seq + 1,
-        entry_seq,
-    )
-    return True
-
-
-def _coerce_decision_when_trade_metrics_fail(
-    out: dict[str, Any],
-    *,
-    decision_stance: str | None = None,
-    kline_frame: Any = None,
-) -> bool:
-    """After breakout entry snap, reject orders that fail RR / trader equation.
-
-    Trade metrics are a gate only. The structural stop is never rewritten here.
-    """
-    decision = out.get("decision")
-    if not isinstance(decision, dict) or decision.get("order_type") not in _TRADE_ORDER_TYPES:
-        return False
-    if decision.get("entry_price") is None:
-        return False
-
-    from pa_agent.util.trade_metrics import validate_order_trade_metrics
-
-    metric_errors = validate_order_trade_metrics(
-        decision,
-        decision_stance=decision_stance,
-        kline_frame=kline_frame,
-        bar_analysis=out.get("bar_analysis")
-        if isinstance(out.get("bar_analysis"), dict)
-        else None,
-    )
-    if not metric_errors:
-        return False
-
-    summary = metric_errors[0]
-    _clear_decision_to_no_order(decision)
-    _set_trace_node_answer(
-        out.get("decision_trace"),
-        "10.3",
-        "否",
-        reason_suffix=f"（程序按 decision 三价校验未通过：{summary}，已改为不下单。）",
-    )
-    terminal = out.get("terminal")
-    if isinstance(terminal, dict):
-        terminal["outcome"] = "reject"
-        terminal["node_id"] = "10.3"
-        terminal.setdefault(
-            "label",
-            "交易方案复核未通过，不下单",
-        )
-    logger.debug(
-        "Coerced decision to 不下单 (trade metrics: %s; structural stop unchanged)",
-        summary,
-    )
     return True
 
 
@@ -1278,91 +801,6 @@ def _max_bar_seq_from_frame(kline_frame: Any) -> int | None:
     return max(seqs) if seqs else None
 
 
-def _fix_background_limit_trace(out: dict[str, Any]) -> bool:
-    """Ensure §9.0P=是 when a planned limit order follows §9.0=否."""
-    try:
-        from pa_agent.ai.decision_nodes import is_planned_limit_order
-    except ImportError:
-        return False
-    if not is_planned_limit_order(out):
-        return False
-    trace = out.get("decision_trace")
-    if not isinstance(trace, list):
-        return False
-
-    node_90: dict[str, Any] | None = None
-    node_90p: dict[str, Any] | None = None
-    for item in trace:
-        if not isinstance(item, dict):
-            continue
-        nid = str(item.get("node_id", "")).strip()
-        if nid == "9.0":
-            node_90 = item
-        elif nid == "9.0P":
-            node_90p = item
-
-    changed = False
-    if node_90 is not None:
-        ans = str(node_90.get("answer", "") or "").strip()
-        if ans in ("否", "等待"):
-            if node_90p is None:
-                trace.insert(
-                    trace.index(node_90) + 1,
-                    {
-                        "node_id": "9.0P",
-                        "section": "入场信号",
-                        "question": "背景驱动限价单评估（§9.0=否 时必须评估）",
-                        "answer": "是",
-                        "reason": (
-                            "程序校正：计划型限价单，周期/结构位支持挂限价，"
-                            "继续 §10 定三价。"
-                        ),
-                        "skipped": False,
-                        "bar_range": "K10-K1",
-                    },
-                )
-                changed = True
-            elif str(node_90p.get("answer", "") or "").strip() in ("否", "等待"):
-                node_90p["answer"] = "是"
-                base = str(node_90p.get("reason", "") or "").strip()
-                suffix = "（程序校正：背景限价路径，非信号棒路径。）"
-                node_90p["reason"] = f"{base}{suffix}".strip() if base else suffix.strip()
-                changed = True
-    return changed
-
-
-def _fix_9_0_for_planned_limit(out: dict[str, Any]) -> bool:
-    """When model outputs a valid planned limit but §9.0=否, upgrade to 是."""
-    try:
-        from pa_agent.ai.decision_nodes import is_planned_limit_order
-    except ImportError:
-        return False
-    if not is_planned_limit_order(out):
-        return False
-    trace = out.get("decision_trace")
-    if not isinstance(trace, list):
-        return False
-    changed = False
-    for item in trace:
-        if not isinstance(item, dict):
-            continue
-        if str(item.get("node_id", "")).strip() != "9.0":
-            continue
-        ans = str(item.get("answer", "") or "").strip()
-        if ans not in ("否", "等待"):
-            return False
-        item["answer"] = "是"
-        base = str(item.get("reason", "") or "").strip()
-        suffix = (
-            "（程序校正：计划型限价单，接受 weak/invalid 或无信号棒，"
-            "等待回撤/反弹到位入场，非等下一根确认棒后放弃。）"
-        )
-        item["reason"] = f"{base}{suffix}".strip() if base else suffix.strip()
-        changed = True
-        break
-    return changed
-
-
 def normalize_stage2(
     obj: dict[str, Any],
     *,
@@ -1379,42 +817,13 @@ def normalize_stage2(
     out = copy.deepcopy(obj)
     frame_max = _max_bar_seq_from_frame(kline_frame)
     _hoist_terminal_from_decision(out)
-    decision = out.get("decision")
-    if isinstance(decision, dict):
-        _normalize_order_type_aliases(decision)
     _ensure_decision_required_fields(out, stage1_json=stage1_json)
     decision = out.get("decision")
     if isinstance(decision, dict):
         _truncate_decision_reasoning(decision)
     _normalize_stage2_enum_aliases(out)
     _normalize_stage2_bar_analysis_enums(out, stage1_json=stage1_json)
-    _coerce_decision_no_order(out)
-    _repair_terminal_trade_node(out)
-    decision = out.get("decision")
-    if isinstance(decision, dict) and normalize_breakout_basis_extreme(decision):
-        logger.debug(
-            "breakout entry_basis_extreme aligned to %s for %s",
-            decision.get("entry_basis_extreme"),
-            decision.get("order_direction"),
-        )
-    if isinstance(decision, dict) and normalize_breakout_entry_price(
-        decision, kline_frame=kline_frame
-    ):
-        logger.debug(
-            "breakout entry_price adjusted to basis extreme ± 1 tick (basis=%s)",
-            decision.get("entry_basis_bar"),
-        )
-    _coerce_decision_when_trade_metrics_fail(
-        out,
-        decision_stance=decision_stance,
-        kline_frame=kline_frame,
-    )
-    if _fix_background_limit_trace(out):
-        logger.debug("Ensured §9.0P for background planned limit order")
-    if _fix_9_0_for_planned_limit(out):
-        logger.debug("Upgraded §9.0 to 是 for planned limit order")
-
-    # ── DecisionNodeEngine: fill §9.1/§9.2/§9.3/§9.5/§11 ─────────────────────
+    # ── DecisionNodeEngine: fill §9.1/§9.2/§9.3/§9.5 ─────────────────────────
     if kline_frame is not None:
         try:
             from pa_agent.ai.decision_nodes import DecisionNodeEngine
@@ -1427,27 +836,8 @@ def normalize_stage2(
         normalization_mode=normalization_mode,
         default_max_seq=frame_max,
     )
-    decision = out.get("decision")
-    if isinstance(decision, dict) and decision.get("order_type") == "不下单":
-        # A no-order decision must satisfy the schema "then" branch:
-        # all price fields + direction must be null.
-        for field in _NO_ORDER_PRICE_FIELDS:
-            decision[field] = None
-        decision["estimated_win_rate"] = None
-        # trade_confidence / trade_confidence_reasoning are required (non-nullable)
-        # by schema; AI incorrectly sets them to null when order_type=不下单.
-        # Patch to valid defaults.
-        if decision.get("trade_confidence") is None:
-            decision["trade_confidence"] = 0
-        if not isinstance(decision.get("trade_confidence_reasoning"), str) or not decision["trade_confidence_reasoning"]:
-            decision["trade_confidence_reasoning"] = "无入场计划，不存在交易信心"
-
     bar_analysis = out.get("bar_analysis")
     decision = out.get("decision")
-    if isinstance(bar_analysis, dict) and isinstance(decision, dict):
-        _normalize_market_order_entry_bar(bar_analysis, decision)
-        if _normalize_signal_entry_bar_chain(bar_analysis, decision):
-            pass
     if isinstance(bar_analysis, dict):
         signal_bar = bar_analysis.get("signal_bar")
         if isinstance(signal_bar, dict):
@@ -1455,23 +845,6 @@ def normalize_stage2(
                 signal_bar["bar"] = None
                 signal_bar.setdefault("quality", "invalid")
                 signal_bar.setdefault("pattern", "none")
-
-        entry_bar = bar_analysis.get("entry_bar")
-        if isinstance(entry_bar, dict):
-            strength = str(entry_bar.get("strength", "") or "").strip().lower()
-            has_bar = bool(entry_bar.get("bar"))
-            if strength == "not_triggered" or not has_bar:
-                # Pending limit/breakout orders do not have an actual entry bar
-                # yet. Normalize common model variants before schema checks.
-                entry_bar["strength"] = "not_triggered"
-                entry_bar.setdefault("bar", None)
-                fresh = str(entry_bar.get("freshness") or "").strip().lower()
-                if fresh in ("stale", "invalid", "expired", ""):
-                    entry_bar["freshness"] = "pending"
-                else:
-                    entry_bar.setdefault("freshness", "pending")
-                if entry_bar.get("follow_through") in (None, "", "pending"):
-                    entry_bar["follow_through"] = "pending"
 
     # ── diagnosis_summary ────────────────────────────────────────────────
     # Schema requires diagnosis_summary; inject minimal default if missing.

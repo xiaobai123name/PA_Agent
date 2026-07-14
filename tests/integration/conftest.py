@@ -67,15 +67,6 @@ SAMPLE_DECISION_TRACE = [
         "skipped": False,
         "bar_range": "K1",
     },
-    {
-        "node_id": "11.2",
-        "section": "\u6700\u7ec8\u786e\u8ba4",
-        "question": "\u662f\u5426\u6267\u884c\u8be5\u4ea4\u6613\u8ba1\u5212\uff1f",
-        "answer": "\u662f",
-        "reason": "\u95f8\u95e8\u4e0e\u9636\u6bb5\u4e8c\u51b3\u7b56\u6811\u8282\u70b9\u5747\u5df2\u901a\u8fc7\u3002",
-        "skipped": False,
-        "bar_range": "K3-K1",
-    },
 ]
 
 SAMPLE_BAR_BY_BAR_SUMMARY = make_bar_by_bar_summary(5)
@@ -117,12 +108,13 @@ SAMPLE_BAR_ANALYSIS = {
 
 VALID_STAGE2 = {
     "decision": {
+        "entry_intent": "breakout",
         "order_direction": "\u505a\u591a",
         "order_type": "\u7a81\u7834\u5355",
-        "entry_price": 2010.5,
-        "take_profit_price": 2050.0,
-        "take_profit_price_2": 2090.0,
-        "stop_loss_price": 1995.0,
+        "entry_price": 2047.0,
+        "take_profit_price": 2064.0,
+        "take_profit_price_2": 2081.0,
+        "stop_loss_price": 2030.0,
         "entry_basis_bar": "K2",
         "entry_basis_extreme": "high",
         "entry_rule": "long breakout above K2 high by 1 tick",
@@ -146,9 +138,9 @@ VALID_STAGE2 = {
     "bar_analysis": SAMPLE_BAR_ANALYSIS,
     "decision_trace": SAMPLE_DECISION_TRACE,
     "terminal": {
-        "node_id": "11.2",
+        "node_id": "10.3",
         "outcome": "trade",
-        "label": "10.3 equation pass, breakout long",
+        "label": "10.3 equation pass, pending execution resolution",
     },
 }
 

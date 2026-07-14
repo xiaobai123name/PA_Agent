@@ -96,6 +96,11 @@ class GeneralSettings(BaseModel):
     enable_next_bar_prediction: bool = False
     #: 同一结构位 entry 相差≤3跳时，禁止反向新方案的冷却 K 线根数（已收盘）
     structure_flip_cooldown_bars: int = Field(default=3, ge=1, le=50)
+    #: ExecutionResolver 只接受此年龄以内的形成中 K 线报价。
+    execution_quote_max_age_ms: int = Field(default=3000, ge=250, le=60000)
+    #: 即时入场允许的最大偏差取 ATR 比例和 tick 数两者较大值。
+    execution_max_slippage_atr: float = Field(default=0.10, ge=0.0, le=1.0)
+    execution_max_slippage_ticks: int = Field(default=3, ge=1, le=100)
 
     @field_validator("last_data_source", mode="before")
     @classmethod

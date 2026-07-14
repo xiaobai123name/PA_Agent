@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from pa_agent.ai.json_validator import JsonValidator, Ok
+from pa_agent.ai.json_validator import JsonValidator, ValidationError
 from pa_agent.config.settings import ValidationSettings
 from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
 from pa_agent.util.trade_metrics import validate_limit_order_k1_freshness
@@ -69,7 +69,7 @@ def test_short_limit_ok_when_k1_below_entry() -> None:
     assert not validate_limit_order_k1_freshness(decision, frame)
 
 
-def test_validator_coerces_stale_short_limit_to_no_order() -> None:
+def test_validator_rejects_stale_short_limit_without_coercion() -> None:
     validator = JsonValidator(ValidationSettings(normalization_mode="lenient"))
     obj = _stage2_trade_obj(
         order_type="限价单",
@@ -96,5 +96,5 @@ def test_validator_coerces_stale_short_limit_to_no_order() -> None:
         decision_stance="aggressive",
         kline_frame=frame,
     )
-    assert isinstance(result, Ok)
-    assert result.obj["decision"]["order_type"] == "不下单"
+    assert isinstance(result, ValidationError)
+    assert obj["decision"]["order_type"] == "限价单"

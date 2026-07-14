@@ -47,30 +47,6 @@ def bar_by_seq(kline_frame: Any, seq: int) -> Any | None:
     return None
 
 
-def canonical_breakout_extreme(order_direction: str) -> str | None:
-    """Return schema-correct entry_basis_extreme for a breakout order."""
-    direction = str(order_direction or "").strip()
-    if direction == "做多":
-        return "high"
-    if direction == "做空":
-        return "low"
-    return None
-
-
-def normalize_breakout_basis_extreme(decision: dict[str, Any]) -> bool:
-    """Align entry_basis_extreme with order_direction (做空→low, 做多→high)."""
-    if decision.get("order_type") != "突破单":
-        return False
-    want = canonical_breakout_extreme(str(decision.get("order_direction", "") or ""))
-    if not want:
-        return False
-    have = str(decision.get("entry_basis_extreme", "") or "").strip().lower()
-    if have == want:
-        return False
-    decision["entry_basis_extreme"] = want
-    return True
-
-
 def breakout_entry_target(
     *,
     direction: str,
@@ -87,59 +63,6 @@ def breakout_entry_target(
     return None
 
 
-def normalize_breakout_entry_price(
-    decision: dict[str, Any],
-    *,
-    kline_frame: Any = None,
-    tick: float | None = None,
-) -> bool:
-    """Force entry_price to basis extreme ± 1 tick for breakout orders.
-
-    Always recomputes entry_price from the cited entry_basis_bar's extreme,
-    regardless of what the AI provided. This prevents AI hallucinations where
-    the model references one bar's seq but uses price data from a different bar
-    — the entry_basis_bar is the single source of truth.
-
-    Returns True when entry_price was adjusted (or recomputed to same value).
-    """
-    if decision.get("order_type") != "突破单":
-        return False
-    if kline_frame is None:
-        return False
-
-    basis_seq = parse_k_seq(decision.get("entry_basis_bar"))
-    if basis_seq is None:
-        return False
-    bar = bar_by_seq(kline_frame, basis_seq)
-    if bar is None:
-        return False
-
-    direction = str(decision.get("order_direction", "") or "")
-    extreme = str(decision.get("entry_basis_extreme", "") or "")
-    step = tick if tick and tick > 0 else infer_price_tick_from_frame(kline_frame) or 0.01
-
-    target = breakout_entry_target(
-        direction=direction,
-        extreme=extreme,
-        basis_high=float(bar.high),
-        basis_low=float(bar.low),
-        tick=step,
-    )
-    if target is None:
-        return False
-
-    try:
-        current = float(decision.get("entry_price"))
-    except (TypeError, ValueError):
-        current = None
-
-    if current == target:
-        return False
-
-    decision["entry_price"] = target
-    return True
-
-
 def format_breakout_tick_hint(kline_frame: Any) -> str:
     """One-line Stage-2 user hint with inferred tick and formula."""
     tick = infer_price_tick_from_frame(kline_frame)
@@ -153,6 +76,5 @@ def format_breakout_tick_hint(kline_frame: Any) -> str:
         f"做空时 `entry_price` 必须 **严格低于** low，推荐 `low - {tick_s}`。"
         f"`entry_rule` 必须写明：`K{{n}} low/high = {{实际价格}}，entry = {{实际价格}} ± {tick_s}`，"
         f"勿重复 order_type/方向长句。"
-        f"**程序会用 entry_basis_bar 对应棒的极点重算 entry_price，忽略你给的数值——"
-        f"请确保 entry_basis_bar 序号与你实际引用的 K 线一致。**"
+        f"**程序只校验，不会修改 entry_price；数值与依据 K 线不一致时直接拒绝。**"
     )

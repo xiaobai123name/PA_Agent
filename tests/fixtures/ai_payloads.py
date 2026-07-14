@@ -21,6 +21,7 @@ VALID_STAGE2_ORDER = VALID_STAGE2
 
 VALID_STAGE2_NO_ORDER = {
     "decision": {
+        "entry_intent": "none",
         "order_direction": None,
         "order_type": "不下单",
         "entry_price": None,

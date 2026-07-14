@@ -52,6 +52,9 @@
 | `general.refresh_interval_ms` | int | `1000` | 图表自动刷新间隔（毫秒） |
 | `general.context_warning_threshold_pct` | float | `80.0` | 上下文占用警告阈值（百分比） |
 | `general.decision_stance` | string | `"balanced"` | 阶段二交易倾向：`conservative` / `balanced` / `aggressive` / `extreme_aggressive` |
+| `general.execution_quote_max_age_ms` | int | `3000` | 执行解析接受的形成中 K 线报价最大年龄（250–60000 毫秒）；超时直接拒绝方案 |
+| `general.execution_max_slippage_atr` | float | `0.10` | `immediate` 即时入场允许偏差的 ATR 比例（0–1） |
+| `general.execution_max_slippage_ticks` | int | `3` | `immediate` 即时入场允许偏差的最小 tick 数（1–100）；最终阈值取 ATR 和 tick 两者较大值 |
 | `general.incremental_max_new_bars` | int | `10` | 增量分析触发阈值：新增已收盘 K 线 ≤ 此值时自动走增量模式（0–500） |
 | `general.independent_analysis_mode` | bool | `false` | 开启后每次分析都不读取上一轮分析记录或 `trade_records` 历史方案，不走增量，也不注入阶段二方案连续性 |
 | `general.auto_resume_chart_after_analysis` | bool | `false` | 分析结束后是否自动恢复「图表实时更新」 |
@@ -87,6 +90,14 @@
 | `validation.retry_max` | int | `3` | 格式错误（category a）最大重试次数（0–5） |
 | `validation.retry_max_semantic` | int | `1` | 语义错误（category c）最大重试次数（0–3） |
 | `validation.retry_stage2` | bool | `true` | 阶段二校验失败时是否重试 |
+
+## 执行解析规则
+
+- AI 必须输出唯一的 `entry_intent`：`pullback`、`breakout`、`immediate` 或 `none`。
+- §11、`execution_review` 和最终执行终点由程序生成，AI 提前输出会校验失败。
+- 程序只校验声明的执行方式，不会自动换成限价单、突破单或市价单，也不会重写入场价。
+- 报价缺失、超过 `execution_quote_max_age_ms`、品种/周期不一致或价格关系失效时，方案会保留原始 `proposed_structure` 并生成明确的拒绝代码。
+- 完整分析 JSON 保存最终解析结果；通过和拒绝的执行尝试另存于 `trade_records/*_execution_audit.csv`。`trade_records/<symbol>_<timeframe>.csv` 只记录最终成立且通过界面信心阈值的交易机会。
 
 ## 安全提醒
 

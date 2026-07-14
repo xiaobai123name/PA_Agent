@@ -1,4 +1,4 @@
-"""Trade record logger — saves order opportunities to CSV and K-line chart images.
+"""Persist trade opportunities and execution-resolution audits.
 
 When stage-2 produces an order (限价单 / 突破单 / 市价单), this module:
   1. Appends a rich row to  trade_records/<symbol>_<timeframe>.csv
@@ -12,6 +12,10 @@ Image : trade_records/<symbol>_<timeframe>_<timestamp>.png
 
 The image filename uses the same timestamp as the ``record_time`` field so
 entries are easy to correlate.
+
+Every resolved or rejected execution attempt is also appended to
+``trade_records/<symbol>_<timeframe>_execution_audit.csv``. Rejected attempts
+stay out of the continuity trade CSV.
 """
 from __future__ import annotations
 
@@ -20,6 +24,7 @@ import json
 import logging
 import math
 import os
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -27,6 +32,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _TRADE_RECORDS_DIR = Path("trade_records")
+_CSV_WRITE_LOCK = threading.Lock()
 
 # Maximum bars to show in the chart image
 _CHART_MAX_BARS = 50
@@ -42,6 +48,7 @@ _CSV_FIELDNAMES = [
     "model",
     # ── Decision core ─────────────────────────────────────────────────────────
     "order_direction",
+    "entry_intent",
     "order_type",
     "entry_price",
     "stop_loss_price",
@@ -64,6 +71,12 @@ _CSV_FIELDNAMES = [
     "risk_assessment",
     "invalidation_condition",
     "high_rr_review",
+    "execution_status",
+    "execution_reason_code",
+    "execution_reason",
+    "execution_market_price",
+    "execution_quote_age_ms",
+    "execution_review",
     # ── Diagnosis summary ─────────────────────────────────────────────────────
     "diag_cycle_position",
     "diag_direction",
@@ -98,6 +111,28 @@ _CSV_FIELDNAMES = [
     "bars_since_prev_plan",
     # ── Image path ────────────────────────────────────────────────────────────
     "chart_image",
+]
+
+_EXECUTION_AUDIT_FIELDNAMES = [
+    "record_time",
+    "symbol",
+    "timeframe",
+    "decision_stance",
+    "model",
+    "entry_intent",
+    "execution_status",
+    "execution_reason_code",
+    "execution_reason",
+    "proposed_order_type",
+    "proposed_entry_price",
+    "proposed_structure",
+    "resolved_order_type",
+    "market_price",
+    "quote_timestamp_ms",
+    "quote_age_ms",
+    "max_slippage",
+    "terminal_node_id",
+    "terminal_outcome",
 ]
 
 
@@ -445,20 +480,85 @@ def save_trade_record(
 
     All arguments are best-effort; missing data is recorded as empty string.
     """
-    try:
-        _save_trade_record_impl(
-            decision_inner=decision_inner,
-            stage2_full=stage2_full,
-            stage1_diagnosis=stage1_diagnosis,
-            frame=frame,
-            meta_symbol=meta_symbol,
-            meta_timeframe=meta_timeframe,
-            decision_stance=decision_stance,
-            model_name=model_name,
-            structure_flip_cooldown_bars=structure_flip_cooldown_bars,
+    _save_trade_record_impl(
+        decision_inner=decision_inner,
+        stage2_full=stage2_full,
+        stage1_diagnosis=stage1_diagnosis,
+        frame=frame,
+        meta_symbol=meta_symbol,
+        meta_timeframe=meta_timeframe,
+        decision_stance=decision_stance,
+        model_name=model_name,
+        structure_flip_cooldown_bars=structure_flip_cooldown_bars,
+    )
+
+
+def save_execution_audit(
+    *,
+    decision_inner: dict,
+    stage2_full: dict,
+    meta_symbol: str,
+    meta_timeframe: str,
+    decision_stance: str,
+    model_name: str,
+) -> Path:
+    """Append one resolved or rejected execution attempt to its audit CSV."""
+    review = decision_inner.get("execution_review")
+    if not isinstance(review, dict):
+        raise ValueError("decision.execution_review is required for execution audit")
+    status = str(review.get("status") or "").strip()
+    if status not in {"resolved", "rejected"}:
+        raise ValueError(
+            "execution audit only accepts resolved or rejected reviews, "
+            f"got {status!r}"
         )
-    except Exception as exc:  # noqa: BLE001
-        logger.error("save_trade_record failed: %s", exc, exc_info=True)
+    symbol = str(meta_symbol or "").strip()
+    timeframe = str(meta_timeframe or "").strip()
+    if not symbol or not timeframe:
+        raise ValueError("symbol and timeframe are required for execution audit")
+
+    safe_symbol = symbol.replace("/", "-").replace("\\", "-")
+    safe_tf = timeframe.replace("/", "-").replace("\\", "-")
+    _TRADE_RECORDS_DIR.mkdir(parents=True, exist_ok=True)
+    path = _TRADE_RECORDS_DIR / f"{safe_symbol}_{safe_tf}_execution_audit.csv"
+    terminal = stage2_full.get("terminal")
+    if not isinstance(terminal, dict):
+        terminal = {}
+    row = {
+        "record_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "decision_stance": decision_stance,
+        "model": model_name,
+        "entry_intent": decision_inner.get("entry_intent"),
+        "execution_status": status,
+        "execution_reason_code": review.get("reason_code"),
+        "execution_reason": review.get("reason"),
+        "proposed_order_type": review.get("proposed_order_type"),
+        "proposed_entry_price": review.get("proposed_entry_price"),
+        "proposed_structure": _j(review.get("proposed_structure")),
+        "resolved_order_type": review.get("resolved_order_type"),
+        "market_price": review.get("market_price"),
+        "quote_timestamp_ms": review.get("quote_timestamp_ms"),
+        "quote_age_ms": review.get("quote_age_ms"),
+        "max_slippage": review.get("max_slippage"),
+        "terminal_node_id": terminal.get("node_id"),
+        "terminal_outcome": terminal.get("outcome"),
+    }
+    with _CSV_WRITE_LOCK:
+        write_header = not path.exists()
+        with path.open("a", newline="", encoding="utf-8-sig") as fh:
+            writer = csv.DictWriter(fh, fieldnames=_EXECUTION_AUDIT_FIELDNAMES)
+            if write_header:
+                writer.writeheader()
+            writer.writerow(
+                {
+                    key: "" if row.get(key) is None else str(row.get(key))
+                    for key in _EXECUTION_AUDIT_FIELDNAMES
+                }
+            )
+    logger.info("Execution audit appended: %s", path)
+    return path
 
 
 def _save_trade_record_impl(
@@ -548,6 +648,7 @@ def _save_trade_record_impl(
         "model": model_name,
 
         "order_direction": _get(dec, "order_direction"),
+        "entry_intent": _get(dec, "entry_intent"),
         "order_type": _get(dec, "order_type"),
         "entry_price": _get(dec, "entry_price"),
         "stop_loss_price": _get(dec, "stop_loss_price"),
@@ -570,6 +671,18 @@ def _save_trade_record_impl(
         "risk_assessment": _get(dec, "risk_assessment"),
         "invalidation_condition": _get(dec, "invalidation_condition"),
         "high_rr_review": _j(_get(dec, "high_rr_review")),
+        "execution_status": _get(dec.get("execution_review") or {}, "status"),
+        "execution_reason_code": _get(
+            dec.get("execution_review") or {}, "reason_code"
+        ),
+        "execution_reason": _get(dec.get("execution_review") or {}, "reason"),
+        "execution_market_price": _get(
+            dec.get("execution_review") or {}, "market_price"
+        ),
+        "execution_quote_age_ms": _get(
+            dec.get("execution_review") or {}, "quote_age_ms"
+        ),
+        "execution_review": _j(_get(dec, "execution_review")),
 
         "diag_cycle_position": _get(diag, "cycle_position"),
         "diag_direction": _get(diag, "direction"),

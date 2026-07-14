@@ -216,13 +216,20 @@ def test_validator_accepts_user_trending_tr_trace() -> None:
     payload = normalize_stage2(
         {
             **VALID_STAGE2,
-            "decision": {
-                **VALID_STAGE2["decision"],
-                "order_type": "不下单",
+                "decision": {
+                    **VALID_STAGE2["decision"],
+                    "entry_intent": "none",
+                    "order_type": "不下单",
                 "order_direction": None,
                 "entry_price": None,
-                "take_profit_price": None,
-                "stop_loss_price": None,
+                    "take_profit_price": None,
+                    "take_profit_price_2": None,
+                    "stop_loss_price": None,
+                    "entry_basis_bar": None,
+                    "entry_basis_extreme": None,
+                    "entry_rule": None,
+                    "estimated_win_rate": None,
+                    "high_rr_review": None,
             },
             "decision_trace": [
                 {
@@ -297,17 +304,24 @@ def test_null_bar_range_inherits_prior_range() -> None:
 
 
 def test_validator_accepts_user_payload_with_null_bar_ranges() -> None:
-    """Regression: skipped §10/§11 nodes had bar_range: null."""
+    """Regression: skipped decision nodes may contain bar_range: null."""
     payload = normalize_stage2(
         {
             **VALID_STAGE2,
-            "decision": {
-                **VALID_STAGE2["decision"],
-                "order_type": "不下单",
+                "decision": {
+                    **VALID_STAGE2["decision"],
+                    "entry_intent": "none",
+                    "order_type": "不下单",
                 "order_direction": None,
                 "entry_price": None,
-                "take_profit_price": None,
-                "stop_loss_price": None,
+                    "take_profit_price": None,
+                    "take_profit_price_2": None,
+                    "stop_loss_price": None,
+                    "entry_basis_bar": None,
+                    "entry_basis_extreme": None,
+                    "entry_rule": None,
+                    "estimated_win_rate": None,
+                    "high_rr_review": None,
             },
             "decision_trace": [
                 {
@@ -350,13 +364,20 @@ def test_validator_accepts_normalized_user_stage2_snippet() -> None:
     base = normalize_stage2(
         {
             **VALID_STAGE2,
-            "decision": {
-                **VALID_STAGE2["decision"],
-                "order_type": "不下单",
+                "decision": {
+                    **VALID_STAGE2["decision"],
+                    "entry_intent": "none",
+                    "order_type": "不下单",
                 "order_direction": None,
                 "entry_price": None,
-                "take_profit_price": None,
-                "stop_loss_price": None,
+                    "take_profit_price": None,
+                    "take_profit_price_2": None,
+                    "stop_loss_price": None,
+                    "entry_basis_bar": None,
+                    "entry_basis_extreme": None,
+                    "entry_rule": None,
+                    "estimated_win_rate": None,
+                    "high_rr_review": None,
             },
             "decision_trace": [
                 {
@@ -450,13 +471,20 @@ def test_validator_accepts_partial_and_pending_answers() -> None:
     payload = normalize_stage2(
         {
             **VALID_STAGE2,
-            "decision": {
-                **VALID_STAGE2["decision"],
-                "order_type": "不下单",
+                "decision": {
+                    **VALID_STAGE2["decision"],
+                    "entry_intent": "none",
+                    "order_type": "不下单",
                 "order_direction": None,
                 "entry_price": None,
-                "take_profit_price": None,
-                "stop_loss_price": None,
+                    "take_profit_price": None,
+                    "take_profit_price_2": None,
+                    "stop_loss_price": None,
+                    "entry_basis_bar": None,
+                    "entry_basis_extreme": None,
+                    "entry_rule": None,
+                    "estimated_win_rate": None,
+                    "high_rr_review": None,
             },
             "decision_trace": [
                 {
@@ -492,13 +520,20 @@ def test_validator_accepts_stage2_with_null_bar_range_and_forbid_phrase() -> Non
     payload = normalize_stage2(
         {
             **VALID_STAGE2,
-            "decision": {
-                **VALID_STAGE2["decision"],
-                "order_type": "不下单",
+                "decision": {
+                    **VALID_STAGE2["decision"],
+                    "entry_intent": "none",
+                    "order_type": "不下单",
                 "order_direction": None,
                 "entry_price": None,
-                "take_profit_price": None,
-                "stop_loss_price": None,
+                    "take_profit_price": None,
+                    "take_profit_price_2": None,
+                    "stop_loss_price": None,
+                    "entry_basis_bar": None,
+                    "entry_basis_extreme": None,
+                    "entry_rule": None,
+                    "estimated_win_rate": None,
+                    "high_rr_review": None,
             },
             "decision_trace": [
                 {

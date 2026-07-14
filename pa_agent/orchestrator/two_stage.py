@@ -318,6 +318,7 @@ class TwoStageOrchestrator:
         pending_writer: "PendingWriter",
         exp_reader: "ExperienceReader",
         settings: Optional["Settings"] = None,
+        quote_provider: Callable[[str, str], Any] | None = None,
     ) -> None:
         self._client = client
         self._assembler = assembler
@@ -326,6 +327,7 @@ class TwoStageOrchestrator:
         self._pending_writer = pending_writer
         self._exp_reader = exp_reader
         self._settings = settings
+        self._quote_provider = quote_provider
 
     def _validation_settings(self) -> Any:
         if self._settings is not None and hasattr(self._settings, "validation"):
@@ -922,6 +924,32 @@ class TwoStageOrchestrator:
         # Validation passed
         assert isinstance(result_s2, Ok)
         stage2_json: dict = result_s2.obj
+        from pa_agent.ai.execution_resolver import (
+            execution_policy_from_settings,
+            resolve_stage2_execution,
+        )
+
+        quote = (
+            self._quote_provider(frame.symbol, frame.timeframe)
+            if self._quote_provider is not None
+            else None
+        )
+        stage2_json = resolve_stage2_execution(
+            stage2_json,
+            frame=frame,
+            quote=quote,
+            policy=execution_policy_from_settings(self._settings),
+        )
+        review = stage2_json.get("decision", {}).get("execution_review", {})
+        logger.info(
+            "execution_resolver status=%s code=%s intent=%s order_type=%s quote=%s age_ms=%s",
+            review.get("status"),
+            review.get("reason_code"),
+            review.get("proposed_entry_intent"),
+            review.get("resolved_order_type"),
+            review.get("market_price"),
+            review.get("quote_age_ms"),
+        )
         if not _enable_next_bar and isinstance(stage2_json, dict):
             stage2_json = copy.deepcopy(stage2_json)
             stage2_json.pop("next_bar_prediction", None)

@@ -21,6 +21,9 @@ def test_defaults(tmp_path):
     assert s.general.last_symbol == "XAUUSDm"
     assert s.general.last_timeframe == "15m"
     assert s.general.decision_stance == "balanced"
+    assert s.general.execution_quote_max_age_ms == 3000
+    assert s.general.execution_max_slippage_atr == 0.10
+    assert s.general.execution_max_slippage_ticks == 3
     assert s.general.decision_flow_auto_play is True
     assert s.general.auto_resume_chart_after_analysis is False
     assert s.general.independent_analysis_mode is False

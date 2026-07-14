@@ -628,11 +628,12 @@ def test_is_planned_limit_order_detects_weak_boundary_limit() -> None:
     assert is_planned_limit_order(obj) is True
 
 
-def test_normalize_stage2_upgrades_9_0_for_planned_limit() -> None:
+def test_normalize_stage2_does_not_rewrite_9_0_for_planned_limit() -> None:
     from pa_agent.ai.stage2_normalizer import normalize_stage2
 
     obj = {
         "decision": {
+            "entry_intent": "pullback",
             "order_type": "限价单",
             "order_direction": "做空",
             "entry_price": 101.0,
@@ -690,7 +691,7 @@ def test_normalize_stage2_upgrades_9_0_for_planned_limit() -> None:
                 "bar_range": "K1",
             },
         ],
-        "terminal": {"node_id": "11.4", "outcome": "trade", "label": "test"},
+        "terminal": {"node_id": "10.3", "outcome": "trade", "label": "test"},
     }
     frame = KlineFrame(
         symbol="XAUUSD",
@@ -704,11 +705,11 @@ def test_normalize_stage2_upgrades_9_0_for_planned_limit() -> None:
     )
     out = normalize_stage2(obj, kline_frame=frame, stage1_json=obj["diagnosis_summary"])
     node_90 = next(n for n in out["decision_trace"] if n["node_id"] == "9.0")
-    assert node_90["answer"] == "是"
+    assert node_90["answer"] == "否"
 
 
 def test_apply_stage2_tolerates_non_dict_stage1_and_decision() -> None:
-    """Regression: string stage1_json/decision must not crash §9/§11 program fill."""
+    """Regression: string stage1_json/decision must not crash §9 program fill."""
     frame = _make_frame()
     out = {
         "decision": "invalid-string-decision",

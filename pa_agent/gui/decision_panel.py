@@ -266,6 +266,11 @@ class DecisionPanel(QWidget):
         trade_summary_layout.addWidget(self._trade_conf_inline_label)
         layout.addWidget(self._trade_summary_row)
 
+        self._execution_review_label = QLabel()
+        self._execution_review_label.setWordWrap(True)
+        self._execution_review_label.setVisible(False)
+        layout.addWidget(self._execution_review_label)
+
         self._trade_prices_row = QWidget()
         prices_layout = QHBoxLayout(self._trade_prices_row)
         prices_layout.setContentsMargins(0, 0, 0, 0)
@@ -428,6 +433,37 @@ class DecisionPanel(QWidget):
             self._trade_conf_inline_label.setVisible(False)
             self._trade_reasoning_label.setVisible(False)
 
+    def _apply_execution_review(self, review: object) -> None:
+        if not isinstance(review, dict):
+            self._execution_review_label.setText("")
+            self._execution_review_label.setVisible(False)
+            return
+
+        status = str(review.get("status") or "").strip()
+        reason = str(review.get("reason") or "").strip()
+        code = str(review.get("reason_code") or "").strip()
+        if status == "resolved":
+            prefix = "执行解析通过"
+            color = "#3fb950"
+        elif status == "rejected":
+            prefix = "执行解析拒绝"
+            color = "#f85149"
+        elif status == "not_applicable":
+            prefix = "无交易意图"
+            color = "#8b949e"
+        else:
+            self._execution_review_label.setText("")
+            self._execution_review_label.setVisible(False)
+            return
+
+        code_text = f" [{code}]" if code else ""
+        reason_text = f"：{reason}" if reason else ""
+        self._execution_review_label.setText(f"{prefix}{code_text}{reason_text}")
+        self._execution_review_label.setStyleSheet(
+            f"font-size: 13px; font-weight: bold; color: {color};"
+        )
+        self._execution_review_label.setVisible(True)
+
     def _set_conclusion_bar_style(self) -> None:
         self._conclusion_bar.setStyleSheet(
             "QFrame#conclusionBar {"
@@ -454,6 +490,7 @@ class DecisionPanel(QWidget):
         confidence_threshold: int | None = None,
     ) -> None:
         self._apply_market_diagnosis(diagnosis_summary, stage1_diagnosis)
+        self._apply_execution_review(decision.get("execution_review"))
 
         order_type = decision.get("order_type", _NO_ORDER)
         reasoning = decision.get("reasoning", decision.get("brief_reasoning", ""))
@@ -601,5 +638,7 @@ class DecisionPanel(QWidget):
         self._trade_prices_row.setVisible(False)
         self._trade_conf_inline_label.setVisible(False)
         self._trade_reasoning_label.setVisible(False)
+        self._execution_review_label.setText("")
+        self._execution_review_label.setVisible(False)
 
         self._reasoning_edit.clear()

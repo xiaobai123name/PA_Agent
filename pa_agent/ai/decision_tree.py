@@ -399,6 +399,7 @@ def build_stage2_gate_wait_response(stage1_json: dict[str, Any]) -> dict[str, An
 
     return {
         "decision": {
+            "entry_intent": "none",
             "order_direction": None,
             "order_type": "不下单",
             "entry_price": None,
