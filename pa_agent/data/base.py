@@ -1,11 +1,9 @@
 """Core data types and DataSource abstract base class."""
 from __future__ import annotations
 
-import math
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Sequence
-
+from dataclasses import dataclass
+from typing import Literal
 
 # ── KlineBar ──────────────────────────────────────────────────────────────────
 
@@ -22,6 +20,26 @@ class KlineBar:
     amount: float = 0.0   # turnover amount (成交额); 0 when unavailable
     pct_chg: float | None = None  # daily change % from API when available
     closed: bool = True   # False for the currently-forming bar
+
+
+VolumeKind = Literal["traded", "tick", "unknown", "unavailable"]
+
+
+@dataclass(frozen=True)
+class VolumeMeta:
+    """Semantics of the volume field carried by every bar in a frame."""
+
+    kind: VolumeKind
+    source: str
+    unit: str
+
+    def __post_init__(self) -> None:
+        if self.kind not in {"traded", "tick", "unknown", "unavailable"}:
+            raise ValueError(f"Unsupported volume kind: {self.kind!r}")
+        if not self.source.strip():
+            raise ValueError("Volume source must not be empty")
+        if not self.unit.strip():
+            raise ValueError("Volume unit must not be empty")
 
 
 def normalize_kline_bar(bar: KlineBar) -> KlineBar:
@@ -68,12 +86,14 @@ class IndicatorBundle:
 class KlineFrame:
     """Immutable snapshot of N bars plus computed indicators.
 
-    bars[0] is the newest bar (seq=1, closed=False).
+    bars[0] is the newest bar. Analysis frames contain closed bars only;
+    live display frames may place a forming ``seq=0`` bar at the head.
     bars[-1] is the oldest bar (seq=N, closed=True).
     snapshot_ts_local_ms is the local machine time when the snapshot was taken.
     """
     symbol: str
     timeframe: str
+    volume_meta: VolumeMeta
     bars: tuple[KlineBar, ...]
     indicators: IndicatorBundle
     snapshot_ts_local_ms: int   # milliseconds since epoch, local time
@@ -107,6 +127,12 @@ class DataSource(ABC):
 
     Implementations: TradingViewSource (active), MT5Source (stub).
     """
+
+    @property
+    @abstractmethod
+    def volume_meta(self) -> VolumeMeta:
+        """Return explicit volume semantics for the active subscription."""
+        raise NotImplementedError
 
     @abstractmethod
     def connect(self) -> None:

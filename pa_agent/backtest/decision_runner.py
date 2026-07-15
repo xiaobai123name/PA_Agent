@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from pa_agent.ai.json_validator import JsonValidator
+from pa_agent.ai.smc_features import SMC_FEATURE_VERSION
+from pa_agent.ai.volume_price_features import VOLUME_FEATURE_VERSION
 from pa_agent.backtest.lifecycle import (
     BacktestDecisionError,
     render_lifecycle_prompt,
@@ -137,6 +140,10 @@ class AIDecisionRunner:
             {
                 "dataset_hash": self._dataset_hash,
                 "prompt_source_hash": self._prompt_hash,
+                "feature_versions": {
+                    "smc": SMC_FEATURE_VERSION,
+                    "volume_price": VOLUME_FEATURE_VERSION,
+                },
                 "provider": provider_snapshot,
                 "general": {
                     "analysis_mode": getattr(
@@ -162,6 +169,7 @@ class AIDecisionRunner:
                     "timeframe": frame.timeframe,
                     "snapshot_ts_local_ms": frame.snapshot_ts_local_ms,
                     "price_tick": frame.price_tick,
+                    "volume_meta": dataclasses.asdict(frame.volume_meta),
                     "bars": [dataclasses.asdict(bar) for bar in frame.bars],
                     "indicators": dataclasses.asdict(frame.indicators),
                 },

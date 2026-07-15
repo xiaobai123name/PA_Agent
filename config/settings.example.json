@@ -9,6 +9,7 @@
   },
   "general": {
     "analysis_bar_count": 100,
+    "show_smc_overlay": false,
     "refresh_interval_ms": 1000,
     "context_warning_threshold_pct": 80.0,
     "last_data_source": "mt5",

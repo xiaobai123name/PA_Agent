@@ -117,6 +117,7 @@ pa-agent
   - TP1 线：绿色虚线
   - TP2 线：浅绿色虚线
   - 方向标记：做多↑ / 做空↓
+- **SMC 图层**：主图下方的「SMC图层」开关默认关闭并记忆状态；开启后绘制最近一次完成分析中的 BOS/CHoCH、流动性扫荡、最多 3 个 FVG 和 2 个 Order Block。切换品种、周期或清空分析时自动清除。
 
 ### 图表操作
 
@@ -230,6 +231,10 @@ PA Agent 的核心分析采用**两阶段（Two-Stage）架构**：
   - `gate_trace`：闸门决策路径
   - `gate_result`：闸门结果（proceed / wait / unknown）
   - `detected_patterns`：检测到的形态（楔形/反转尝试/H1H2/突破失败等）
+  - `smc_context`：程序计算的 SMC 结构与 PA 的支持/冲突关系及引用 ID
+  - `volume_price_context`：成交量语义、RVOL 与量价信号的辅助关系及引用 ID
+
+SMC 与量价特征只使用已收盘 K 线并在每轮分析中完整重算。Brooks PA、阶段闸门、顺势规则、禁追规则和交易者方程仍是主框架；量价不能单独改变方向、通过闸门或生成三价。MT5 成交量明确标记为 tick volume，交易所/股票成交量标记为 traded，未知语义不生成量价结论。
 
 ### 阶段二：交易决策（Stage 2 — Decision）
 
@@ -248,6 +253,7 @@ PA Agent 的核心分析采用**两阶段（Two-Stage）架构**：
   - `order_type`：下单类型（限价单/突破单/市价单/不下单）
   - `order_direction`：方向（做多/做空）
   - `entry_price`：入场价
+  - `evidence_confluence`：PA、SMC、量价三类证据的支持/冲突、引用 ID 和最终影响
   - `stop_loss_price`：止损价
   - `take_profit_price`：TP1（主止盈价）
   - `take_profit_price_2`：TP2（延伸止盈价）

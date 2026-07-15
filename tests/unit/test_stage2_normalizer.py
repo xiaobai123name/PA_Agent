@@ -6,14 +6,13 @@ import json
 from pa_agent.ai.json_validator import JsonValidator, Ok, ValidationError
 from pa_agent.ai.stage2_normalizer import (
     _normalize_closed_enum,
+    _normalize_next_bar_prediction,
     _normalize_stage2_bar_analysis_enums,
     _strip_enum_suffix,
     normalize_stage2,
-    _normalize_next_bar_prediction,
 )
-from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
+from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame, VolumeMeta
 from tests.fixtures.validators import schema_test_validator
-
 
 # ── Closed enum annotation stripping (bar_type / freshness) ────────────────
 
@@ -71,6 +70,15 @@ def test_normalize_second_entry_type_null_passes_schema() -> None:
             "watch_points": [],
             "risk_assessment": "t",
             "invalidation_condition": "",
+            "evidence_confluence": {
+                "pa": "neutral",
+                "smc": "unavailable",
+                "volume_price": "unavailable",
+                "smc_refs": [],
+                "volume_refs": [],
+                "conflicts": [],
+                "impact": "none",
+            },
         },
         "diagnosis_summary": {
             "cycle_position": "trending_tr",
@@ -373,6 +381,15 @@ def test_normalize_stage2_with_prediction():
             "watch_points": [],
             "risk_assessment": "t",
             "invalidation_condition": "t",
+            "evidence_confluence": {
+                "pa": "neutral",
+                "smc": "unavailable",
+                "volume_price": "unavailable",
+                "smc_refs": [],
+                "volume_refs": [],
+                "conflicts": [],
+                "impact": "none",
+            },
         },
         "diagnosis_summary": {
             "cycle_position": "normal_channel",
@@ -401,6 +418,7 @@ def test_normalize_stage2_with_prediction():
 def test_wrong_breakout_entry_is_not_rewritten_or_coerced() -> None:
     """Wrong breakout pricing stays visible and fails validation."""
     frame = KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="XAUUSD",
         timeframe="1h",
         bars=(
@@ -751,6 +769,15 @@ def test_repair_next_bar_yinxian_singular_probability() -> None:
             "watch_points": [],
             "risk_assessment": "t",
             "invalidation_condition": "t",
+            "evidence_confluence": {
+                "pa": "neutral",
+                "smc": "unavailable",
+                "volume_price": "unavailable",
+                "smc_refs": [],
+                "volume_refs": [],
+                "conflicts": [],
+                "impact": "none",
+            },
         },
         "diagnosis_summary": {
             "cycle_position": "trending_tr",
@@ -811,6 +838,15 @@ def test_validator_injects_next_bar_when_feature_disabled() -> None:
             "watch_points": [],
             "risk_assessment": "t",
             "invalidation_condition": "t",
+            "evidence_confluence": {
+                "pa": "neutral",
+                "smc": "unavailable",
+                "volume_price": "unavailable",
+                "smc_refs": [],
+                "volume_refs": [],
+                "conflicts": [],
+                "impact": "none",
+            },
         },
         "diagnosis_summary": {
             "cycle_position": "trending_tr",

@@ -185,6 +185,8 @@ STAGE1_SCHEMA: dict = {
         "detected_patterns",
         "key_signals",
         "htf_context",
+        "smc_context",
+        "volume_price_context",
         "entry_setup",
         "strategy_files_needed",
         "bar_by_bar_summary",
@@ -220,6 +222,30 @@ STAGE1_SCHEMA: dict = {
         "detected_patterns": {"type": "array", "items": {"type": "string"}},
         "key_signals": {"type": "array", "items": {"type": "string"}},
         "htf_context": {"type": "string"},
+        "smc_context": {
+            "type": "object",
+            "required": ["status", "structure_bias", "confluence", "referenced_ids", "reasoning"],
+            "properties": {
+                "status": {"type": "string", "enum": ["available", "unavailable"]},
+                "structure_bias": {"type": "string", "enum": ["bullish", "bearish", "neutral", "unavailable"]},
+                "confluence": {"type": "string", "enum": ["supports", "opposes", "mixed", "neutral", "unavailable"]},
+                "referenced_ids": {"type": "array", "items": {"type": "string"}},
+                "reasoning": {"type": "string"},
+            },
+            "additionalProperties": False,
+        },
+        "volume_price_context": {
+            "type": "object",
+            "required": ["status", "kind", "confluence", "referenced_ids", "reasoning"],
+            "properties": {
+                "status": {"type": "string", "enum": ["available", "unavailable"]},
+                "kind": {"type": "string", "enum": ["traded", "tick", "unknown", "unavailable"]},
+                "confluence": {"type": "string", "enum": ["supports", "opposes", "mixed", "neutral", "unavailable"]},
+                "referenced_ids": {"type": "array", "items": {"type": "string"}},
+                "reasoning": {"type": "string"},
+            },
+            "additionalProperties": False,
+        },
         "trend_context": {
             "type": "object",
             "properties": {
@@ -335,6 +361,7 @@ _DECISION_BASE: dict = {
         "key_factors",
         "watch_points",
         "risk_assessment",
+        "evidence_confluence",
     ],
     "properties": {
         "entry_intent": {
@@ -363,6 +390,20 @@ _DECISION_BASE: dict = {
         "key_factors": {"type": "array", "items": {"type": "string"}},
         "watch_points": {"type": "array", "items": {"type": "string"}},
         "risk_assessment": {"type": "string"},
+        "evidence_confluence": {
+            "type": "object",
+            "required": ["pa", "smc", "volume_price", "smc_refs", "volume_refs", "conflicts", "impact"],
+            "properties": {
+                "pa": {"type": "string", "enum": ["supports", "opposes", "neutral"]},
+                "smc": {"type": "string", "enum": ["supports", "opposes", "neutral", "unavailable"]},
+                "volume_price": {"type": "string", "enum": ["supports", "opposes", "neutral", "unavailable"]},
+                "smc_refs": {"type": "array", "items": {"type": "string"}},
+                "volume_refs": {"type": "array", "items": {"type": "string"}},
+                "conflicts": {"type": "array", "items": {"type": "string"}},
+                "impact": {"type": "string", "enum": ["confirm", "downgrade", "invalidate", "none"]},
+            },
+            "additionalProperties": False,
+        },
         "invalidation_condition": {"type": ["string", "null"]},
         "high_rr_review": {
             "type": ["object", "null"],
@@ -518,6 +559,8 @@ _NEXT_BAR_PREDICTION: dict = {
                     "experience_library",
                     "stage2_decision",
                     "previous_prediction_summary",
+                    "smc_features",
+                    "volume_price_features",
                 ],
             },
             "uniqueItems": True,
@@ -591,6 +634,8 @@ _NEXT_CYCLE_PREDICTION: dict = {
                     "experience_library",
                     "stage2_decision",
                     "previous_prediction_summary",
+                    "smc_features",
+                    "volume_price_features",
                 ],
             },
             "uniqueItems": True,

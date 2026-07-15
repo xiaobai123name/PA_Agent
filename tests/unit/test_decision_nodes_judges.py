@@ -28,7 +28,7 @@ from pa_agent.ai.decision_nodes import (
     merge_program_nodes,
     write_override_trace,
 )
-from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
+from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame, VolumeMeta
 
 
 def _make_bar(seq: int, *, high: float = 2010.0, low: float = 1990.0,
@@ -71,6 +71,7 @@ def _make_frame(
 
     atr = tuple([10.0] * n)
     return KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="TEST", timeframe="1h",
         bars=tuple(bars),
         snapshot_ts_local_ms=1,
@@ -156,6 +157,7 @@ class TestDirectionProperty2:
         """Property 2: direction ∈ {bullish, bearish, neutral}."""
         bars = tuple(_make_bar(i + 1) for i in range(n))
         frame = KlineFrame(
+            volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
             symbol="TEST", timeframe="1h", bars=bars, snapshot_ts_local_ms=1,
             indicators=IndicatorBundle(ema20=tuple([2000.0] * n), atr14=tuple([10.0] * n)),
         )
@@ -182,6 +184,7 @@ class TestAlwaysInJudge:
         bars = tuple(_make_bar(i + 1, close=2050.0, high=2060.0, low=2040.0) for i in range(n))
         ema = tuple(2000.0 + (n - i) * 0.5 for i in range(n))  # rising EMA
         frame = KlineFrame(
+            volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
             symbol="TEST", timeframe="1h", bars=bars, snapshot_ts_local_ms=1,
             indicators=IndicatorBundle(ema20=ema, atr14=tuple([10.0] * n)),
         )
@@ -195,6 +198,7 @@ class TestAlwaysInJudge:
         bars = tuple(_make_bar(i + 1, close=1950.0, high=1960.0, low=1940.0) for i in range(n))
         ema = tuple(2000.0 - (n - i) * 0.5 for i in range(n))  # falling EMA (still above 1950)
         frame = KlineFrame(
+            volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
             symbol="TEST", timeframe="1h", bars=bars, snapshot_ts_local_ms=1,
             indicators=IndicatorBundle(ema20=ema, atr14=tuple([10.0] * n)),
         )
@@ -210,6 +214,7 @@ class TestAlwaysInJudge:
             _make_bar(i + 1, close=2005.0 if i % 2 == 0 else 1995.0) for i in range(n)
         )
         frame = KlineFrame(
+            volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
             symbol="TEST", timeframe="1h", bars=bars, snapshot_ts_local_ms=1,
             indicators=IndicatorBundle(ema20=tuple([2000.0] * n), atr14=tuple([10.0] * n)),
         )
@@ -222,6 +227,7 @@ class TestAlwaysInJudge:
         bars = tuple(_make_bar(i + 1, close=2050.0, high=2060.0, low=2040.0) for i in range(n))
         ema = tuple(2000.0 + (n - i) * 0.5 for i in range(n))
         frame = KlineFrame(
+            volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
             symbol="TEST", timeframe="1h", bars=bars, snapshot_ts_local_ms=1,
             indicators=IndicatorBundle(ema20=ema, atr14=tuple([10.0] * n)),
         )
@@ -530,6 +536,7 @@ class TestApplyStage1:
     def _make_sufficient_frame(self, n: int = 25) -> KlineFrame:
         bars = tuple(_make_bar(i + 1) for i in range(n))
         return KlineFrame(
+            volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
             symbol="TEST", timeframe="1h", bars=bars, snapshot_ts_local_ms=1,
             indicators=IndicatorBundle(ema20=tuple([2000.0] * n), atr14=tuple([10.0] * n)),
         )
@@ -694,6 +701,7 @@ def test_normalize_stage2_does_not_rewrite_9_0_for_planned_limit() -> None:
         "terminal": {"node_id": "10.3", "outcome": "trade", "label": "test"},
     }
     frame = KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="XAUUSD",
         timeframe="5m",
         bars=(

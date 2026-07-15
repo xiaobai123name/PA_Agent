@@ -10,15 +10,20 @@ from pathlib import Path
 from typing import Any
 
 from pa_agent.ai.decision_stance import build_decision_stance_guidance, normalize_stance
-from pa_agent.ai.pattern_routing import (
-    STAGE1_DETECTED_PATTERNS_GUIDE,
-    STAGE1_PATTERN_BRIEFS_BLOCK,
-)
 from pa_agent.ai.kline_features import bar_candle_direction_label, compute_kline_geometry_features
 from pa_agent.ai.market_features import (
     compute_simple_market_features,
     inject_market_features_section,
     render_simple_market_features,
+)
+from pa_agent.ai.pattern_routing import (
+    STAGE1_DETECTED_PATTERNS_GUIDE,
+    STAGE1_PATTERN_BRIEFS_BLOCK,
+)
+from pa_agent.ai.smc_features import compute_smc_features, render_smc_features
+from pa_agent.ai.volume_price_features import (
+    compute_volume_price_features,
+    render_volume_price_features,
 )
 from pa_agent.data.base import KlineFrame
 from pa_agent.data.datetime_ts import format_epoch_for_display
@@ -136,6 +141,17 @@ _MARKET_FEATURES_AUTHORITY_NOTE = (
     "任何旧版/缺失的结构摘要；若数值冲突，以本消息重算结果为准。\n\n"
 )
 
+_SMC_VOLUME_FUSION_RULES = """
+## SMC 与量价融合规则（硬约束）
+
+- Brooks PA、阶段一闸门、顺势/禁追规则和 §10.3 交易者方程仍是主决策框架。
+- SMC 只能确认、暴露冲突或使一个已有入场假设结构失效；不得绕过 gate_result、逆势下单或凭空生成三价。
+- 成交量不是必要条件。仅当程序量价状态为 available 时使用；tick volume 必须视为代理量。
+- 量价只能确认或降低把握，不能单独改变 direction、通过闸门、否决交易或生成 entry/stop/target。
+- 引用 SMC/量价时必须填写程序给出的稳定 id；禁止引用不存在的事件或区域。
+- 程序状态为 unavailable 时，相应 context/confluence 必须写 unavailable，不得猜测或补造信号。
+""".strip()
+
 _STAGE2_TAIL_REMINDER = (
     "【最后一步·必做】思考结束后，立即在 assistant 正文 `content` 输出完整阶段二裸 JSON"
     "（含 decision、decision_trace、terminal）。思考用简体中文并尽量简洁；`content` 不得为空。"
@@ -181,6 +197,20 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
   "detected_patterns": [],
   "key_signals": [],
   "htf_context": "",
+  "smc_context": {
+    "status": "available|unavailable",
+    "structure_bias": "bullish|bearish|neutral|unavailable",
+    "confluence": "supports|opposes|mixed|neutral|unavailable",
+    "referenced_ids": [],
+    "reasoning": ""
+  },
+  "volume_price_context": {
+    "status": "available|unavailable",
+    "kind": "traded|tick|unknown|unavailable",
+    "confluence": "supports|opposes|mixed|neutral|unavailable",
+    "referenced_ids": [],
+    "reasoning": ""
+  },
   "entry_setup": "",
   "support_levels": ["5402", "5119"],
   "resistance_levels": ["6147", "6300"],
@@ -364,6 +394,15 @@ JSON 字符串内不要用英文双引号强调，改用「」或不用引号。
     "watch_points": [],
     "risk_assessment": "",
     "invalidation_condition": "",
+    "evidence_confluence": {
+      "pa": "supports|opposes|neutral",
+      "smc": "supports|opposes|neutral|unavailable",
+      "volume_price": "supports|opposes|neutral|unavailable",
+      "smc_refs": [],
+      "volume_refs": [],
+      "conflicts": [],
+      "impact": "confirm|downgrade|invalidate|none"
+    },
     "high_rr_review": null
   },
   "diagnosis_summary": {
@@ -655,7 +694,7 @@ _NEXT_BAR_PREDICTION_INSTRUCTION = """\
    （即按 bullish → bearish → neutral 的字面顺序）。
 3. reasoning 长度 30–1500 字，简体中文，不写下单价格、不写止损止盈，仅讨论方向与概率依据。
 4. features_used 合法取值封闭列表（只能从下方选对应值，禁止自造字符串）：
-   "stage1_diagnosis"、"kline_features"、"analysis_history"、"experience_library"、"stage2_decision"、"previous_prediction_summary"。
+   "stage1_diagnosis"、"kline_features"、"analysis_history"、"experience_library"、"stage2_decision"、"previous_prediction_summary"、"smc_features"、"volume_price_features"。
    至少包含 "stage1_diagnosis"；若提示词中提供了对应来源，应同步包含
    "kline_features" / "analysis_history" / "experience_library" / "previous_prediction_summary"。
 5. 数据不足（K 线数 < 8）、或阶段一诊断为 extreme_tr / unknown、或市场极端混乱时：
@@ -719,7 +758,7 @@ spike | micro_channel | tight_channel | normal_channel | broad_channel | trendin
    表达的是预测下一个周期时市场整体偏向的方向。
 4. reasoning 长度 1–1500 字，简体中文，仅讨论周期演变依据，不写下单价格、不写止损止盈。
 5. features_used 合法取值封闭列表（只能从下方选对应值，禁止自造字符串）：
-   "stage1_diagnosis"、"kline_features"、"analysis_history"、"experience_library"、"stage2_decision"、"previous_prediction_summary"。
+   "stage1_diagnosis"、"kline_features"、"analysis_history"、"experience_library"、"stage2_decision"、"previous_prediction_summary"、"smc_features"、"volume_price_features"。
    至少包含 "stage1_diagnosis"；若提示词中提供了对应来源，应同步包含
    "kline_features" / "analysis_history" / "experience_library" / "previous_prediction_summary"。
 6. 数据不足（K 线数 < 8）、或阶段一诊断为 extreme_tr / unknown、或市场极端混乱时：
@@ -1005,13 +1044,17 @@ class PromptAssembler:
 
     @staticmethod
     def _render_simple_market_features_block(frame: KlineFrame) -> str:
-        """Render simple structure pre-computations (range, swings, HL count, MM)."""
-        try:
-            features = compute_simple_market_features(frame)
-            return render_simple_market_features(features)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("_render_simple_market_features_block failed: %s", exc)
-            return ""
+        """Render deterministic PA, SMC, and volume-price pre-computations."""
+        features = compute_simple_market_features(frame)
+        smc = compute_smc_features(frame)
+        volume_price = compute_volume_price_features(frame, smc_features=smc)
+        return "\n\n".join(
+            (
+                render_simple_market_features(features),
+                render_smc_features(smc),
+                render_volume_price_features(volume_price),
+            )
+        )
 
     @staticmethod
     def _inject_market_features_block(prompt: str, frame: KlineFrame) -> str:
@@ -1182,9 +1225,9 @@ class PromptAssembler:
         """
         try:
             from pa_agent.ai.decision_nodes import (
+                judge_always_in,
                 judge_data_sufficiency,
                 judge_direction,
-                judge_always_in,
             )
             from pa_agent.ai.trend_context import (
                 build_trend_context,
@@ -1257,6 +1300,7 @@ class PromptAssembler:
         stage1_parts = [
             *(self._load(name) for name in STAGE1_TASK_PROMPT_TXT_FILES),
             *([pattern_block] if pattern_block else []),
+            _SMC_VOLUME_FUSION_RULES,
             _stage1_output_reminder_for_mode(analysis_mode),
         ]
         stage1_context = "\n\n---\n\n".join(p for p in stage1_parts if p)
@@ -1628,6 +1672,7 @@ class PromptAssembler:
             conflict_block,
             transition_block,
             execution_intent_block,
+            _SMC_VOLUME_FUSION_RULES,
             *(
                 self._load(name)
                 for name in stage2_user_task_txt_files(
@@ -1760,6 +1805,9 @@ class PromptAssembler:
             "key_signals",
             "htf_context",
             "trend_context",
+            "smc_context",
+            "volume_price_context",
+            "program_features",
             "entry_setup",
             "support_levels",
             "resistance_levels",

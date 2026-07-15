@@ -12,9 +12,9 @@ from pa_agent.ai.coherence_checks import (
     validate_stage2_coherence,
 )
 from pa_agent.ai.json_validator import Ok
-from tests.fixtures.validators import schema_test_validator
-from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
+from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame, VolumeMeta
 from tests.fixtures.gate_trace import make_bar_by_bar_summary, make_mandatory_gate_trace_proceed
+from tests.fixtures.validators import schema_test_validator
 
 
 def _frame(n: int = 5) -> KlineFrame:
@@ -32,6 +32,7 @@ def _frame(n: int = 5) -> KlineFrame:
         for i in range(n)
     )
     return KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="XAUUSD",
         timeframe="15m",
         bars=bars,
@@ -52,6 +53,20 @@ def _stage1_proceed() -> dict:
         "detected_patterns": [],
         "key_signals": [],
         "htf_context": "x",
+        "smc_context": {
+            "status": "unavailable",
+            "structure_bias": "unavailable",
+            "confluence": "unavailable",
+            "referenced_ids": [],
+            "reasoning": "数据不足",
+        },
+        "volume_price_context": {
+            "status": "unavailable",
+            "kind": "unavailable",
+            "confluence": "unavailable",
+            "referenced_ids": [],
+            "reasoning": "数据不足",
+        },
         "entry_setup": "x",
         "strategy_files_needed": [],
         "bar_by_bar_summary": make_bar_by_bar_summary(5),
@@ -165,6 +180,7 @@ def test_bar_type_mismatch_near_threshold_does_not_error_in_strict() -> None:
     # Build a bar with body_ratio ~= 0.25 (doji cutoff).
     # Range=10, body=2.6 -> 0.26 (within eps 0.02).
     frame = KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="XAUUSD",
         timeframe="15m",
         bars=(
@@ -192,6 +208,7 @@ def test_bar_type_mismatch_near_threshold_does_not_error_in_strict() -> None:
 
 def test_structural_inside_outside_mismatch_still_errors_in_strict() -> None:
     frame = KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="XAUUSD",
         timeframe="15m",
         bars=(

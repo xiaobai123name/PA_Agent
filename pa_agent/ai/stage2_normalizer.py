@@ -47,6 +47,8 @@ _VALID_FEATURES_USED = frozenset({
     "experience_library",
     "stage2_decision",
     "previous_prediction_summary",
+    "smc_features",
+    "volume_price_features",
 })
 
 

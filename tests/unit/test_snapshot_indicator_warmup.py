@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 
 from pa_agent.ai.kline_features import compute_kline_geometry_features
-from pa_agent.data.base import KlineBar
+from pa_agent.data.base import KlineBar, VolumeMeta
 from pa_agent.data.snapshot import (
     INDICATOR_WARMUP_BARS,
     build_analysis_frame,
@@ -39,7 +39,7 @@ def test_build_analysis_frame_ema_uses_warmup_buffer() -> None:
     bars_raw = _bars_newest_first(closes)
     n = 25
 
-    frame = build_analysis_frame(bars_raw, n, "XAUUSD", "5m")
+    frame = build_analysis_frame(bars_raw, n, "XAUUSD", "5m", volume_meta=VolumeMeta("traded", "test", "test"))
     assert frame is not None
     assert len(frame.bars) == n
 
@@ -59,7 +59,7 @@ def test_build_analysis_frame_falls_back_when_buffer_unavailable() -> None:
     """When fewer than n+warmup bars exist, still return n bars if possible."""
     closes = [50.0 + i for i in range(25)]
     bars_raw = _bars_newest_first(closes)
-    frame = build_analysis_frame(bars_raw, 20, "XAUUSD", "5m")
+    frame = build_analysis_frame(bars_raw, 20, "XAUUSD", "5m", volume_meta=VolumeMeta("traded", "test", "test"))
     assert frame is not None
     assert len(frame.bars) == 20
 
@@ -71,6 +71,7 @@ def test_feature_limit_uses_full_frame_prev_context() -> None:
         5,
         "XAUUSD",
         "5m",
+        volume_meta=VolumeMeta("traded", "test", "test"),
     )
     assert frame is not None
 

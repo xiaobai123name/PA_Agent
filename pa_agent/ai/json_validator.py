@@ -385,6 +385,42 @@ def _try_repair_json_syntax(
     return candidate
 
 
+def _program_feature_ids(stage1: dict[str, Any], key: str) -> set[str]:
+    program = stage1.get("program_features")
+    if not isinstance(program, dict):
+        return set()
+    if key == "smc":
+        feature = program.get("smc")
+        groups = (
+            feature.get("pivots"),
+            feature.get("events"),
+            feature.get("fvgs"),
+            feature.get("order_blocks"),
+        ) if isinstance(feature, dict) else ()
+    else:
+        feature = program.get("volume_price")
+        groups = (feature.get("signals"),) if isinstance(feature, dict) else ()
+    ids = {
+        str(item["id"])
+        for group in groups
+        if isinstance(group, list)
+        for item in group
+        if isinstance(item, dict) and item.get("id")
+    }
+    if key == "smc" and isinstance(feature, dict):
+        dealing_range = feature.get("dealing_range")
+        if isinstance(dealing_range, dict) and dealing_range.get("id"):
+            ids.add(str(dealing_range["id"]))
+    return ids
+
+
+def _unknown_feature_refs(stage1: dict[str, Any], refs: object, key: str) -> list[str]:
+    if not isinstance(refs, list):
+        return []
+    available = _program_feature_ids(stage1, key)
+    return [str(ref) for ref in refs if str(ref) not in available]
+
+
 # ── JsonValidator ─────────────────────────────────────────────────────────────
 
 class JsonValidator:
@@ -607,6 +643,54 @@ class JsonValidator:
         if stage == "stage1":
             from pa_agent.ai.coherence_checks import auto_fix_bar_by_bar_types
 
+            smc_context = obj.get("smc_context")
+            if isinstance(smc_context, dict) and smc_context.get("status") == "unavailable":
+                if smc_context.get("structure_bias") != "unavailable":
+                    semantic_invalid.append(
+                        "smc_context.structure_bias must be unavailable when status=unavailable"
+                    )
+                if smc_context.get("confluence") != "unavailable":
+                    semantic_invalid.append(
+                        "smc_context.confluence must be unavailable when status=unavailable"
+                    )
+                if smc_context.get("referenced_ids"):
+                    semantic_invalid.append(
+                        "smc_context.referenced_ids must be empty when status=unavailable"
+                    )
+
+            volume_context = obj.get("volume_price_context")
+            if (
+                isinstance(volume_context, dict)
+                and volume_context.get("status") == "unavailable"
+            ):
+                if volume_context.get("confluence") != "unavailable":
+                    semantic_invalid.append(
+                        "volume_price_context.confluence must be unavailable when status=unavailable"
+                    )
+                if volume_context.get("referenced_ids"):
+                    semantic_invalid.append(
+                        "volume_price_context.referenced_ids must be empty when status=unavailable"
+                    )
+
+            for ref in _unknown_feature_refs(
+                obj,
+                (obj.get("smc_context") or {}).get("referenced_ids")
+                if isinstance(obj.get("smc_context"), dict)
+                else None,
+                "smc",
+            ):
+                semantic_invalid.append(f"smc_context.referenced_ids unknown id: {ref}")
+            for ref in _unknown_feature_refs(
+                obj,
+                (obj.get("volume_price_context") or {}).get("referenced_ids")
+                if isinstance(obj.get("volume_price_context"), dict)
+                else None,
+                "volume_price",
+            ):
+                semantic_invalid.append(
+                    f"volume_price_context.referenced_ids unknown id: {ref}"
+                )
+
             # Auto-correct contradicting bar_type values before validation so
             # minor model slips (writing trend_bull when program says trend_bear)
             # don't cause the whole analysis to fail.
@@ -615,11 +699,11 @@ class JsonValidator:
                 _logging.getLogger(__name__).info("stage1 %s", msg)
 
             if getattr(self._validation, "stage1_coherence_checks", False):
-                from pa_agent.ai.decision_tree import validate_gate_result_consistency
                 from pa_agent.ai.coherence_checks import (
                     validate_incremental_stage1_coherence,
                     validate_stage1_coherence,
                 )
+                from pa_agent.ai.decision_tree import validate_gate_result_consistency
 
                 for msg in validate_gate_result_consistency(obj):
                     semantic_invalid.append(f"gate:{msg}")
@@ -688,9 +772,61 @@ class JsonValidator:
             ):
                 semantic_invalid.append(f"metrics:{msg}")
 
+            if isinstance(stage1_json, dict):
+                decision = obj.get("decision")
+                evidence = (
+                    decision.get("evidence_confluence")
+                    if isinstance(decision, dict)
+                    else None
+                )
+                if isinstance(evidence, dict):
+                    for ref in _unknown_feature_refs(
+                        stage1_json, evidence.get("smc_refs"), "smc"
+                    ):
+                        semantic_invalid.append(
+                            f"evidence_confluence.smc_refs unknown id: {ref}"
+                        )
+                    for ref in _unknown_feature_refs(
+                        stage1_json, evidence.get("volume_refs"), "volume_price"
+                    ):
+                        semantic_invalid.append(
+                            f"evidence_confluence.volume_refs unknown id: {ref}"
+                        )
+
+            decision = obj.get("decision")
+            evidence = (
+                decision.get("evidence_confluence")
+                if isinstance(decision, dict)
+                else None
+            )
+            if isinstance(evidence, dict):
+                if evidence.get("smc") == "unavailable" and evidence.get("smc_refs"):
+                    semantic_invalid.append(
+                        "evidence_confluence.smc_refs must be empty when smc=unavailable"
+                    )
+                if (
+                    evidence.get("volume_price") == "unavailable"
+                    and evidence.get("volume_refs")
+                ):
+                    semantic_invalid.append(
+                        "evidence_confluence.volume_refs must be empty when volume_price=unavailable"
+                    )
+                if evidence.get("impact") == "invalidate" and not (
+                    evidence.get("pa") == "opposes" or evidence.get("smc") == "opposes"
+                ):
+                    semantic_invalid.append(
+                        "evidence_confluence: volume-price evidence cannot invalidate a setup by itself"
+                    )
+                if evidence.get("impact") == "confirm" and not (
+                    evidence.get("pa") == "supports" or evidence.get("smc") == "supports"
+                ):
+                    semantic_invalid.append(
+                        "evidence_confluence: volume-price evidence cannot confirm a setup by itself"
+                    )
+
             if getattr(self._validation, "stage2_coherence_checks", False):
-                from pa_agent.ai.decision_tree import validate_stage2_trace_consistency
                 from pa_agent.ai.coherence_checks import validate_stage2_coherence
+                from pa_agent.ai.decision_tree import validate_stage2_trace_consistency
 
                 for msg in validate_stage2_trace_consistency(obj):
                     semantic_invalid.append(f"trace:{msg}")

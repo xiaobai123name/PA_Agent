@@ -1,8 +1,8 @@
 """TradingView data source using tvdatafeed."""
 from __future__ import annotations
 
-from datetime import datetime
 import logging
+from datetime import datetime
 from typing import Any, Mapping
 
 from pa_agent.data.base import (
@@ -12,9 +12,9 @@ from pa_agent.data.base import (
     DataSourceInvalidSymbolError,
     DataSourceTransientError,
     KlineBar,
+    VolumeMeta,
     normalize_kline_bar,
 )
-
 from pa_agent.data.datetime_ts import datetime_to_ts_ms, naive_local_to_utc
 from pa_agent.data.market_defaults import (
     is_tv_exchange_auto,
@@ -22,19 +22,22 @@ from pa_agent.data.market_defaults import (
     resolve_tv_fetch_pair,
     tv_auto_probe_plan,
 )
-from pa_agent.data.tv_symbol_lookup import TvSymbolNotFoundError
 from pa_agent.data.tradingview_errors import format_tradingview_fetch_error
 from pa_agent.data.tradingview_process import (
     TradingViewFetchRequest,
     TradingViewFetchSupervisor,
     TradingViewProcessCancelled,
 )
+from pa_agent.data.tv_symbol_lookup import TvSymbolNotFoundError
 
 logger = logging.getLogger(__name__)
 
 # The parent kills the child if tvDatafeed ignores its WebSocket timeout.
 _TV_WS_TIMEOUT_S = 10.0
 _TV_HARD_TIMEOUT_S = 12.0
+_TRADED_VOLUME_EXCHANGES = frozenset(
+    {"BINANCE", "OKX", "SSE", "SZSE", "HKEX", "NYSE", "NASDAQ", "CBOT", "CME_MINI"}
+)
 
 # Map our timeframe strings to tvDatafeed Interval enum names
 _TF_MAP: dict[str, str] = {
@@ -144,6 +147,7 @@ class TradingViewSource(DataSource):
         self._symbol: str = ""
         self._timeframe: str = ""
         self._exchange: str = ""
+        self._resolved_exchange: str = ""
         # Callback for status updates during auto-probe: fn(symbol, exchange, label)
         self.on_probe_status = None
 
@@ -151,9 +155,25 @@ class TradingViewSource(DataSource):
     def exchange(self) -> str:
         return self._exchange
 
+    @property
+    def volume_meta(self) -> VolumeMeta:
+        exchange = self._resolved_exchange or self._exchange
+        if exchange in _TRADED_VOLUME_EXCHANGES:
+            return VolumeMeta(
+                kind="traded",
+                source=f"TradingView:{exchange}",
+                unit="provider_reported",
+            )
+        return VolumeMeta(
+            kind="unknown",
+            source=f"TradingView:{exchange or 'AUTO'}",
+            unit="provider_reported",
+        )
+
     def set_exchange(self, exchange: str) -> None:
         """Set TradingView exchange id (e.g. ``BINANCE``); empty = auto-detect."""
         self._exchange = (exchange or "").strip().upper()
+        self._resolved_exchange = ""
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -218,6 +238,7 @@ class TradingViewSource(DataSource):
             clean_symbol = normalize_binance_display_symbol(symbol)
         self._timeframe = timeframe
         self._symbol = clean_symbol
+        self._resolved_exchange = ""
         self.cancel_pending()
         logger.info(
             "TradingViewSource subscribed: %s %s exchange=%s",
@@ -229,6 +250,7 @@ class TradingViewSource(DataSource):
     def unsubscribe(self) -> None:
         self._symbol = ""
         self._timeframe = ""
+        self._resolved_exchange = ""
         logger.info("TradingViewSource unsubscribed")
 
     # ── Data fetch ────────────────────────────────────────────────────────────
@@ -394,6 +416,8 @@ class TradingViewSource(DataSource):
                 exchange or req_exchange or "(auto)",
             )
             raise DataSourceEmptyError(msg)
+
+        self._resolved_exchange = exchange
 
         bars: list[KlineBar] = []
         for i, row in enumerate(reversed(rows)):

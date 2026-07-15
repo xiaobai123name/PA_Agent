@@ -1,10 +1,10 @@
 """Tests for Stage 1 JSON normalization."""
 from __future__ import annotations
 
-from tests.fixtures.validators import schema_test_validator
 from pa_agent.ai.coherence_checks import validate_stage1_coherence
 from pa_agent.ai.stage1_normalizer import normalize_stage1
-from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
+from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame, VolumeMeta
+from tests.fixtures.validators import schema_test_validator
 from tests.integration.conftest import VALID_STAGE1
 
 
@@ -162,6 +162,8 @@ def test_validator_accepts_normalized_user_payload() -> None:
     normalized["gate_trace"] = gate_trace
     normalized["bar_by_bar_summary"] = VALID_STAGE1["bar_by_bar_summary"]
     normalized["strategy_files_needed"] = ["下跌通道分析识别.txt"]
+    normalized["smc_context"] = VALID_STAGE1["smc_context"]
+    normalized["volume_price_context"] = VALID_STAGE1["volume_price_context"]
     result = schema_test_validator().validate("stage1", json.dumps(normalized, ensure_ascii=False))
     from pa_agent.ai.json_validator import Ok
 
@@ -290,6 +292,7 @@ def test_normalize_bar_by_bar_role_reversal_attempt_maps_to_signal() -> None:
 def test_pad_bar_by_bar_summary_when_model_only_sends_three_bars() -> None:
     n = 100
     frame = KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="XAUUSD",
         timeframe="15m",
         bars=tuple(

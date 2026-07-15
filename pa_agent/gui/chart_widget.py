@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import QEvent, Qt, QTimer
+from PyQt6.QtWidgets import QGraphicsRectItem
 
 from pa_agent.gui.widgets.candle_item import CandleItem
 from pa_agent.gui.widgets.overlay_lines import OverlayLines
@@ -33,6 +34,10 @@ _Y_TOP_EXTRA_RATIO = 0.04
 _FIT_VISIBLE_BARS = 20
 _AXIS_RESIZE_MIN_WIDTH = 40
 _AXIS_RESIZE_EDGE_PX = 8
+_SMC_STRUCTURE_LIMIT = 2
+_SMC_SWEEP_LIMIT = 3
+_SMC_FVG_LIMIT = 3
+_SMC_OB_LIMIT = 2
 
 
 class ChartWidget(pg.PlotWidget):
@@ -60,6 +65,9 @@ class ChartWidget(pg.PlotWidget):
         self._ema_line: pg.PlotDataItem | None = None
         self._overlay = OverlayLines()
         self._sr_items: list[pg.GraphicsItem] = []  # support/resistance level lines
+        self._smc_items: list[pg.GraphicsItem] = []
+        self._smc_features: dict | None = None
+        self._smc_visible: bool = False
         self._pending_decision: dict | None = None
         self._direction_items: list[pg.GraphicsItem] = []
         self._seq_label_font_pt: int = 7
@@ -268,6 +276,104 @@ class ChartWidget(pg.PlotWidget):
             plot.removeItem(item)
         self._sr_items.clear()
 
+    def set_smc_visible(self, visible: bool) -> None:
+        self._smc_visible = bool(visible)
+        self._render_smc_overlay()
+
+    def set_smc_features(self, features: dict | None) -> None:
+        self._smc_features = features if isinstance(features, dict) else None
+        self._render_smc_overlay()
+
+    def clear_smc_overlay(self) -> None:
+        plot = self.getPlotItem()
+        for item in self._smc_items:
+            plot.removeItem(item)
+        self._smc_items.clear()
+        self._smc_features = None
+
+    def _render_smc_overlay(self) -> None:
+        plot = self.getPlotItem()
+        for item in self._smc_items:
+            plot.removeItem(item)
+        self._smc_items.clear()
+        frame = self._latest_frame
+        features = self._smc_features
+        if not self._smc_visible or frame is None or not isinstance(features, dict):
+            return
+        if features.get("status") != "available":
+            return
+
+        ts_to_x = {
+            int(bar.ts_open): float(len(frame.bars) - 1 - i)
+            for i, bar in enumerate(frame.bars)
+        }
+        newest_x = float(max(0, len(frame.bars) - 1))
+
+        events = [event for event in features.get("events", []) if isinstance(event, dict)]
+        structure_events = [
+            event for event in events if event.get("kind") in {"bos", "choch"}
+        ][:_SMC_STRUCTURE_LIMIT]
+        sweep_events = [
+            event for event in events if event.get("kind") == "liquidity_sweep"
+        ][:_SMC_SWEEP_LIMIT]
+        for event in (*structure_events, *sweep_events):
+            ts = int(event.get("ts_open", -1))
+            x0 = ts_to_x.get(ts)
+            if x0 is None:
+                continue
+            level = float(event["level"])
+            if event.get("kind") == "liquidity_sweep":
+                marker = pg.ScatterPlotItem(
+                    x=[x0],
+                    y=[level],
+                    symbol="t" if event.get("direction") == "bullish" else "t1",
+                    size=8,
+                    brush=pg.mkBrush(250, 204, 21, 180),
+                    pen=pg.mkPen(None),
+                )
+                plot.addItem(marker)
+                self._smc_items.append(marker)
+                continue
+            color = (
+                (34, 197, 94, 150)
+                if event.get("direction") == "bullish"
+                else (239, 68, 68, 150)
+            )
+            line = pg.PlotDataItem(
+                x=[x0, newest_x],
+                y=[level, level],
+                pen=pg.mkPen(color=color, width=1, style=Qt.PenStyle.DashLine),
+            )
+            plot.addItem(line)
+            self._smc_items.append(line)
+
+        zone_groups = (
+            (features.get("fvgs", []), _SMC_FVG_LIMIT, (56, 189, 248, 24), "created_ts"),
+            (features.get("order_blocks", []), _SMC_OB_LIMIT, (168, 85, 247, 28), "origin_ts"),
+        )
+        for zones, limit, color, timestamp_key in zone_groups:
+            active = [
+                z for z in zones
+                if isinstance(z, dict) and z.get("status") != "invalidated"
+            ][:limit]
+            for zone in active:
+                x0 = ts_to_x.get(int(zone[timestamp_key]))
+                if x0 is None:
+                    continue
+                lower = float(zone["lower"])
+                upper = float(zone["upper"])
+                region = QGraphicsRectItem(
+                    x0 - 0.45,
+                    lower,
+                    max(0.9, newest_x - x0 + 0.9),
+                    upper - lower,
+                )
+                region.setBrush(pg.mkBrush(color=color))
+                region.setPen(pg.mkPen(None))
+                region.setZValue(-5)
+                plot.addItem(region)
+                self._smc_items.append(region)
+
     # ── Price-axis resize via viewportEvent ──────────────────────────────────
 
     def _axis_right_edge_wx(self) -> float:
@@ -341,6 +447,7 @@ class ChartWidget(pg.PlotWidget):
     def reset(self) -> None:
         """Clear all chart items (candles, labels, EMA, overlay lines)."""
         self.clear_decision_overlay()
+        self.clear_smc_overlay()
         self._clear_candles_and_labels()
         if self._ema_line is not None:
             self.removeItem(self._ema_line)
@@ -420,6 +527,7 @@ class ChartWidget(pg.PlotWidget):
             self.addItem(self._ema_line)
 
         self._update_direction_marker()
+        self._render_smc_overlay()
 
         if self._fit_on_next_render:
             self._fit_on_next_render = False

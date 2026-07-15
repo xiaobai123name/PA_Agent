@@ -49,6 +49,7 @@
 | `general.last_symbol` | string | `"XAUUSDm"` | 默认品种。MT5 需含后缀（如 `m`），TradingView 用标准名（如 `XAUUSD`） |
 | `general.last_timeframe` | string | `"15m"` | 默认周期，如 `1m`、`5m`、`15m`、`1h`、`4h`、`1d` |
 | `general.analysis_bar_count` | int | `100` | 提交分析时使用的 K 线数量（2–5000） |
+| `general.show_smc_overlay` | bool | `false` | 是否在主图显示最近分析的 SMC 结构图层 |
 | `general.refresh_interval_ms` | int | `1000` | 图表自动刷新间隔（毫秒） |
 | `general.context_warning_threshold_pct` | float | `80.0` | 上下文占用警告阈值（百分比） |
 | `general.decision_stance` | string | `"balanced"` | 阶段二交易倾向：`conservative` / `balanced` / `aggressive` / `extreme_aggressive` |

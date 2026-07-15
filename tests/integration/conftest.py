@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
+from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame, VolumeMeta
 from tests.fixtures.gate_trace import make_bar_by_bar_summary, make_mandatory_gate_trace_proceed
 
 SAMPLE_GATE_TRACE = make_mandatory_gate_trace_proceed(max_seq=20)
@@ -79,6 +79,20 @@ VALID_STAGE1 = {
     "detected_patterns": [],
     "key_signals": ["signal1"],
     "htf_context": "bullish trend",
+    "smc_context": {
+        "status": "available",
+        "structure_bias": "bullish",
+        "confluence": "supports",
+        "referenced_ids": [],
+        "reasoning": "结构与PA同向",
+    },
+    "volume_price_context": {
+        "status": "available",
+        "kind": "traded",
+        "confluence": "neutral",
+        "referenced_ids": [],
+        "reasoning": "相对量正常",
+    },
     "entry_setup": "buy on pullback",
     "strategy_files_needed": ["\u4e0a\u6da8\u901a\u9053\u5206\u6790\u8bc6\u522b.txt"],
     "bar_by_bar_summary": SAMPLE_BAR_BY_BAR_SUMMARY,
@@ -129,6 +143,15 @@ VALID_STAGE2 = {
         "watch_points": ["watch1"],
         "risk_assessment": "low risk",
         "invalidation_condition": "break below 1980",
+        "evidence_confluence": {
+            "pa": "supports",
+            "smc": "supports",
+            "volume_price": "neutral",
+            "smc_refs": [],
+            "volume_refs": [],
+            "conflicts": [],
+            "impact": "confirm",
+        },
     },
     "diagnosis_summary": {
         "cycle_position": "normal_channel",
@@ -174,7 +197,7 @@ def make_frame() -> KlineFrame:
             low=1990.0 + (n - 1 - i) * 2.0,
             close=2005.0 + (n - 1 - i) * 2.0,   # close rises: K20=close~2005, K1=close~2043
             volume=100.0,
-            closed=(i > 0),
+            closed=True,
         )
         for i in range(n)
     )
@@ -186,6 +209,7 @@ def make_frame() -> KlineFrame:
         atr14=atr_values,
     )
     return KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="XAUUSD",
         timeframe="1h",
         bars=bars,

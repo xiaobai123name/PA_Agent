@@ -7,8 +7,8 @@ import uuid
 from dataclasses import asdict
 from typing import Any, Callable
 
-from pa_agent.backtest.lifecycle import BacktestDecisionError, validate_lifecycle_decision
 from pa_agent.backtest.decision_runner import BacktestAIError
+from pa_agent.backtest.lifecycle import BacktestDecisionError, validate_lifecycle_decision
 from pa_agent.backtest.models import (
     BacktestEvent,
     BacktestRunConfig,
@@ -18,6 +18,7 @@ from pa_agent.backtest.models import (
 )
 from pa_agent.backtest.simulator import AmbiguousExecutionError, ExecutionSimulator
 from pa_agent.backtest.storage import BacktestRunStore
+from pa_agent.data.base import VolumeMeta
 from pa_agent.data.live_quote import LiveQuote
 from pa_agent.data.snapshot import build_analysis_frame
 
@@ -149,6 +150,11 @@ class BacktestEngine:
                     config.analysis_bar_count,
                     config.dataset.symbol,
                     config.dataset.analysis_timeframe,
+                    volume_meta=VolumeMeta(
+                        kind="traded",
+                        source="BinanceBacktest",
+                        unit="base_asset",
+                    ),
                     now_ms=close_ms,
                     price_tick=config.dataset.metadata.tick_size,
                 )

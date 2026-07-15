@@ -12,6 +12,7 @@ from pa_agent.ai.retry_policy import (
     should_retry,
 )
 from pa_agent.ai.stage2_normalizer import ensure_stage2_predictions
+from pa_agent.data.base import VolumeMeta
 from pa_agent.gui.stage2_payload import prepare_stage2_for_ui
 from pa_agent.orchestrator.validation_retry import validate_with_retry
 
@@ -65,6 +66,7 @@ def test_detect_cheat_no_false_positive_when_program_normalizes_direction():
         for i in range(25)
     )
     frame = KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="TEST",
         timeframe="1h",
         bars=bars,

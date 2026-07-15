@@ -8,7 +8,7 @@ from pa_agent.backtest.decision_runner import AIDecisionRunner, BacktestAIError
 from pa_agent.backtest.models import SimulationClock
 from pa_agent.backtest.storage import DecisionCache, build_cache_key
 from pa_agent.config.settings import Settings
-from pa_agent.data.base import KlineBar
+from pa_agent.data.base import KlineBar, VolumeMeta
 from pa_agent.data.live_quote import LiveQuote
 from pa_agent.data.snapshot import build_analysis_frame
 from pa_agent.records.schema import AnalysisRecord, RecordMeta
@@ -131,6 +131,7 @@ def _frame_and_quote():
         2,
         "BTCUSDT",
         "1m",
+        volume_meta=VolumeMeta("traded", "test", "test"),
         now_ms=120_000,
         price_tick=0.1,
     )
@@ -163,6 +164,41 @@ def test_runner_classifies_lifecycle_error_as_skippable_and_does_not_cache(tmp_p
     assert raised.value.skippable is True
     with sqlite3.connect(runner._cache.path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM decisions").fetchone()[0] == 0
+
+
+def test_cache_key_includes_feature_versions_and_volume_meta(tmp_path, monkeypatch):
+    import pa_agent.backtest.decision_runner as decision_runner
+    from pa_agent.ai.smc_features import SMC_FEATURE_VERSION
+    from pa_agent.ai.volume_price_features import VOLUME_FEATURE_VERSION
+
+    captured = {}
+
+    def _capture(payload):
+        captured.update(payload)
+        return "captured-key"
+
+    monkeypatch.setattr(decision_runner, "build_cache_key", _capture)
+    runner = _manual_runner(tmp_path, _record())
+    frame, quote = _frame_and_quote()
+
+    with pytest.raises(BacktestAIError):
+        runner.decide(
+            frame,
+            quote=quote,
+            pending=None,
+            cancel_token=CancelToken(),
+            reuse_cache=False,
+        )
+
+    assert captured["feature_versions"] == {
+        "smc": SMC_FEATURE_VERSION,
+        "volume_price": VOLUME_FEATURE_VERSION,
+    }
+    assert captured["frame"]["volume_meta"] == {
+        "kind": "traded",
+        "source": "test",
+        "unit": "test",
+    }
 
 
 def test_runner_classifies_network_record_as_fatal(tmp_path):

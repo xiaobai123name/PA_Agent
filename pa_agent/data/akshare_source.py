@@ -13,7 +13,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from pa_agent.data.base import DataSource, DataSourceTransientError, KlineBar, normalize_kline_bar
+from pa_agent.data.base import (
+    DataSource,
+    DataSourceTransientError,
+    KlineBar,
+    VolumeMeta,
+    normalize_kline_bar,
+)
 from pa_agent.data.datetime_ts import datetime_to_ts_ms
 
 logger = logging.getLogger(__name__)
@@ -253,6 +259,10 @@ class AkShareSource(DataSource):
         self._connected: bool = False
         self._baostock_ok: bool = False
         self._baostock_logged_in: bool = False
+
+    @property
+    def volume_meta(self) -> VolumeMeta:
+        return VolumeMeta(kind="traded", source="AkShare", unit="provider_reported")
 
     def connect(self) -> None:
         # Avoid tqdm progress bars on stderr (blocks some IDE consoles).

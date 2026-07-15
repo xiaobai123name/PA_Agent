@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 from pa_agent.ai.kline_features import _is_inside, compute_kline_geometry_features
-from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame, normalize_kline_bar
+from pa_agent.data.base import (
+    IndicatorBundle,
+    KlineBar,
+    KlineFrame,
+    VolumeMeta,
+    normalize_kline_bar,
+)
 from pa_agent.data.snapshot import _rebase_closed_bars
 
 
@@ -59,6 +65,7 @@ def test_inside_not_true_after_normalize_on_inverted_ohlc() -> None:
 def test_close_position_clamped_in_features() -> None:
     """Defense-in-depth: clamp even if a caller skips normalize_kline_bar."""
     frame = KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="X",
         timeframe="5m",
         bars=(

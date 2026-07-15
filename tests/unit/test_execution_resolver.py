@@ -3,9 +3,8 @@ from __future__ import annotations
 import pytest
 
 from pa_agent.ai.execution_resolver import ExecutionPolicy, resolve_stage2_execution
-from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
+from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame, VolumeMeta
 from pa_agent.data.live_quote import LiveQuote
-
 
 NOW_MS = 10_000
 
@@ -16,6 +15,7 @@ def _frame() -> KlineFrame:
         KlineBar(1, 1_000, 99.80, 100.20, 99.70, 100.00, 1, closed=True),
     )
     return KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="BTCUSDT",
         timeframe="15m",
         bars=bars,

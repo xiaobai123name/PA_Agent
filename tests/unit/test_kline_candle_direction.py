@@ -5,7 +5,7 @@ import math
 
 from pa_agent.ai.kline_features import bar_candle_direction_label
 from pa_agent.ai.prompt_assembler import PromptAssembler
-from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
+from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame, VolumeMeta
 
 
 def _bar(*, open_: float, close: float, seq: int = 1) -> KlineBar:
@@ -29,6 +29,7 @@ def test_bar_candle_direction_label() -> None:
 
 def test_kline_table_includes_yang_yin_column() -> None:
     frame = KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="TEST",
         timeframe="15m",
         bars=(

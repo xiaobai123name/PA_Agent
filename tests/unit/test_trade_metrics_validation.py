@@ -4,13 +4,12 @@ from __future__ import annotations
 import json
 
 from pa_agent.ai.json_validator import Ok, ValidationError
-from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
+from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame, VolumeMeta
 from pa_agent.util.trade_metrics import (
     compute_risk_reward,
     passes_trader_equation,
     validate_order_trade_metrics,
 )
-
 from tests.fixtures.validators import schema_test_validator
 
 validator = schema_test_validator()
@@ -18,6 +17,7 @@ validator = schema_test_validator()
 
 def _frame() -> KlineFrame:
     return KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="XAUUSD",
         timeframe="5m",
         bars=(

@@ -15,7 +15,7 @@ from pa_agent.backtest.models import (
     FrozenDataset,
 )
 from pa_agent.backtest.storage import BacktestRunStore
-from pa_agent.data.base import KlineBar
+from pa_agent.data.base import KlineBar, VolumeMeta
 from pa_agent.data.snapshot import build_analysis_frame
 from pa_agent.records.schema import AnalysisRecord, RecordMeta
 from pa_agent.util.threading import CancelToken
@@ -321,6 +321,7 @@ def test_historical_frame_uses_simulation_timestamp():
         2,
         "BTCUSDT",
         "15m",
+        volume_meta=VolumeMeta("traded", "test", "test"),
         now_ms=1_800_000,
     )
     assert frame is not None

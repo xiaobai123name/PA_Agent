@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 
-from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
+from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame, VolumeMeta
 from pa_agent.data.snapshot import frame_is_pure_closed, frames_equal_for_chart
 from pa_agent.gui.chart_widget import ChartWidget
 
@@ -28,6 +28,7 @@ def _frame(*, forming: bool = False, close: float = 10.0) -> KlineFrame:
     )
     n = len(bars)
     return KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="XAUUSD",
         timeframe="15m",
         bars=bars,
@@ -47,6 +48,7 @@ def test_frame_is_pure_closed() -> None:
 def test_frames_equal_ignores_snapshot_ts() -> None:
     a = _frame()
     b = KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol=a.symbol,
         timeframe=a.timeframe,
         bars=a.bars,
@@ -64,6 +66,7 @@ def test_set_frame_now_skips_identical_closed_frame(qtbot) -> None:
     assert len(widget._candle_items) == 2
     count_after_first = len(widget._candle_items)
     f2 = KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol=f1.symbol,
         timeframe=f1.timeframe,
         bars=f1.bars,

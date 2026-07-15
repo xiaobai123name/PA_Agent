@@ -14,6 +14,7 @@ from pa_agent.data.base import (
     DataSource,
     DataSourceTransientError,
     KlineBar,
+    VolumeMeta,
     normalize_kline_bar,
 )
 
@@ -149,6 +150,10 @@ class TushareSource(DataSource):
         self._cache_key: tuple[str, str, int] | None = None
         self._cache_time = 0.0
         self._cache_bars: list[KlineBar] = []
+
+    @property
+    def volume_meta(self) -> VolumeMeta:
+        return VolumeMeta(kind="traded", source="Tushare", unit="provider_reported")
 
     def connect(self) -> None:
         token = self._configured_token()

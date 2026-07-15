@@ -14,6 +14,7 @@ from pa_agent.data.base import (
     DataSource,
     DataSourceTransientError,
     KlineBar,
+    VolumeMeta,
     normalize_kline_bar,
 )
 from pa_agent.data.datetime_ts import datetime_to_ts_ms
@@ -54,6 +55,10 @@ class YFinanceSource(DataSource):
         self._symbol: str = ""
         self._timeframe: str = ""
         self._connected: bool = False
+
+    @property
+    def volume_meta(self) -> VolumeMeta:
+        return VolumeMeta(kind="traded", source="YahooFinance", unit="provider_reported")
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 

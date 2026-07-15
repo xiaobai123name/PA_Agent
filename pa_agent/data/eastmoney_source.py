@@ -21,8 +21,7 @@ from pa_agent.data.ashare_common import (
     row_time_to_ts_ms as _row_time_to_ts_ms,
     rows_to_kline_bars as _rows_to_kline_bars,
 )
-from pa_agent.data.base import DataSource, DataSourceTransientError, KlineBar
-from pa_agent.data.refresh_policy import snapshot_cache_ttl_s
+from pa_agent.data.base import DataSource, DataSourceTransientError, KlineBar, VolumeMeta
 from pa_agent.data.eastmoney_baostock import (
     _BaostockSession,
     eastmoney_rolling_cap,
@@ -41,6 +40,7 @@ from pa_agent.data.eastmoney_client import (
     is_transient_http_error,
 )
 from pa_agent.data.kline_adjust import get_kline_adjust
+from pa_agent.data.refresh_policy import snapshot_cache_ttl_s
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +104,10 @@ class EastMoneySource(DataSource):
         self._snap_cache_n: int = 0
         self._snap_cache_ts: float = 0.0
         self._snap_cache_bars: list[KlineBar] = []
+
+    @property
+    def volume_meta(self) -> VolumeMeta:
+        return VolumeMeta(kind="traded", source="EastMoney", unit="provider_reported")
 
     def connect(self) -> None:
         self._connected = True
@@ -369,7 +373,7 @@ class EastMoneySource(DataSource):
 
         if daily:
             from pa_agent.data.ashare_common import apply_session_quote_to_forming_row
-            from pa_agent.data.eastmoney_client import fetch_stock_order_book, fetch_spot_price
+            from pa_agent.data.eastmoney_client import fetch_spot_price, fetch_stock_order_book
 
             book = fetch_stock_order_book(self._symbol)
             if book is not None and book.price > 0:

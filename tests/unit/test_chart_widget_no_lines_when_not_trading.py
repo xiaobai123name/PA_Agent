@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import pytest
 
+from pa_agent.data.base import VolumeMeta
+
 # Guard: skip the whole module if PyQt6 / pyqtgraph are not available
 pytest.importorskip("PyQt6")
 pytest.importorskip("pyqtgraph")
@@ -88,7 +90,7 @@ class TestNoLinesWhenNotTrading:
 
     def test_short_decision_shows_down_arrow(self, chart_widget, qtbot):
         """做空 decision draws a ▼ marker at the newest bar."""
-        from pa_agent.data.base import KlineBar, KlineFrame, IndicatorBundle
+        from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
 
         bars = tuple(
             KlineBar(
@@ -104,6 +106,7 @@ class TestNoLinesWhenNotTrading:
             for i in range(5)
         )
         frame = KlineFrame(
+            volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
             symbol="XAUUSD",
             timeframe="1h",
             bars=bars,

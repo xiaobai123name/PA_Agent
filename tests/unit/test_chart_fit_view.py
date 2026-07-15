@@ -5,6 +5,8 @@ import math
 
 import pytest
 
+from pa_agent.data.base import VolumeMeta
+
 pytest.importorskip("PyQt6")
 pytest.importorskip("pyqtgraph")
 
@@ -26,6 +28,7 @@ def _sample_frame(*, n: int = 5):
         for i in range(n)
     )
     return KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="XAUUSD",
         timeframe="15m",
         bars=bars,
@@ -140,9 +143,8 @@ class TestResizableAxisItem:
     """viewportEvent-based axis resize."""
 
     def test_axis_resize_via_viewport_event(self, chart_widget, qtbot):
-        from PyQt6.QtCore import QPointF
+        from PyQt6.QtCore import QEvent, QPointF, Qt
         from PyQt6.QtGui import QMouseEvent
-        from PyQt6.QtCore import QEvent, Qt
         from PyQt6.QtWidgets import QApplication
 
         vp = chart_widget.viewport()
@@ -174,10 +176,10 @@ class TestResizableAxisItem:
         assert chart_widget._axis_resizing is False
 
     def test_axis_resize_minimum_width(self, chart_widget, qtbot):
-        from PyQt6.QtCore import QPointF
+        from PyQt6.QtCore import QEvent, QPointF, Qt
         from PyQt6.QtGui import QMouseEvent
-        from PyQt6.QtCore import QEvent, Qt
         from PyQt6.QtWidgets import QApplication
+
         from pa_agent.gui.chart_widget import _AXIS_RESIZE_MIN_WIDTH
 
         vp = chart_widget.viewport()
@@ -207,9 +209,8 @@ class TestResizableAxisItem:
 
     def test_viewbox_still_receives_normal_click(self, chart_widget, qtbot):
         """Click in the ViewBox area should NOT be consumed by axis resize."""
-        from PyQt6.QtCore import QPointF
+        from PyQt6.QtCore import QEvent, QPointF, Qt
         from PyQt6.QtGui import QMouseEvent
-        from PyQt6.QtCore import QEvent, Qt
         from PyQt6.QtWidgets import QApplication
 
         vp = chart_widget.viewport()

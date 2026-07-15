@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from pa_agent.ai.kline_features import compute_kline_geometry_features
-from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
+from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame, VolumeMeta
 
 
 def test_compute_kline_geometry_features_classifies_basic_bars() -> None:
     frame = KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="XAUUSD",
         timeframe="5m",
         bars=(
@@ -28,6 +29,7 @@ def test_compute_kline_geometry_features_classifies_basic_bars() -> None:
 
 def test_compute_kline_geometry_features_marks_multibar_patterns() -> None:
     frame = KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="XAUUSD",
         timeframe="5m",
         bars=(
@@ -53,6 +55,7 @@ def test_compute_kline_geometry_features_marks_multibar_patterns() -> None:
 
 def test_compute_kline_geometry_features_detects_inside_sequence_and_micro_double() -> None:
     frame = KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="XAUUSD",
         timeframe="5m",
         bars=(
@@ -73,6 +76,7 @@ def test_compute_kline_geometry_features_detects_inside_sequence_and_micro_doubl
 def test_geometry_features_limit_keeps_prev_bar_context() -> None:
     """limit=2 must not slice bars before compute (regression for incremental 新增表)."""
     frame = KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="XAUUSD",
         timeframe="5m",
         bars=(
@@ -93,6 +97,7 @@ def test_geometry_features_limit_keeps_prev_bar_context() -> None:
 
 def test_flat_bar_type_when_zero_range_and_not_inside() -> None:
     frame = KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="X",
         timeframe="5m",
         bars=(
@@ -110,6 +115,7 @@ def test_follow_through_1_2_uses_direction_not_extreme() -> None:
     # 多头信号棒：open=10, high=12, low=9, close=11
     # 后一根K线收盘跌破开盘价但未跌破低点 → 视为反向失败
     frame_bull = KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="X",
         timeframe="5m",
         bars=(
@@ -125,6 +131,7 @@ def test_follow_through_1_2_uses_direction_not_extreme() -> None:
     # 空头信号棒：open=10, high=11, low=8, close=9
     # 后一根K线收盘高于开盘价但未突破高点 → 视为反向失败
     frame_bear = KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="X",
         timeframe="5m",
         bars=(

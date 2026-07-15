@@ -4,7 +4,13 @@ from __future__ import annotations
 import math
 
 from pa_agent.data.bar_close_wait import has_forming_bar_at_head
-from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame, normalize_kline_bar
+from pa_agent.data.base import (
+    IndicatorBundle,
+    KlineBar,
+    KlineFrame,
+    VolumeMeta,
+    normalize_kline_bar,
+)
 from pa_agent.util.timefmt import now_local_ms
 
 # Extra closed bars fetched before the AI window so EMA20/ATR14 can warm up.
@@ -52,6 +58,7 @@ def take_snapshot_from_bars(
     symbol: str,
     timeframe: str,
     *,
+    volume_meta: VolumeMeta,
     now_ms: int | None = None,
 ) -> KlineFrame:
     """Build an analysis KlineFrame from a newest-first bar list (same as AI table).
@@ -61,7 +68,14 @@ def take_snapshot_from_bars(
 
     Raises ValueError if insufficient bars are available.
     """
-    frame = build_analysis_frame(bars_raw, n, symbol, timeframe, now_ms=now_ms)
+    frame = build_analysis_frame(
+        bars_raw,
+        n,
+        symbol,
+        timeframe,
+        volume_meta=volume_meta,
+        now_ms=now_ms,
+    )
     if frame is None:
         raise ValueError(
             f"Need at least {n} closed bars (or {n + 1} with a forming bar at index 0); "
@@ -107,8 +121,8 @@ def compute_indicators(bars: list[KlineBar]) -> IndicatorBundle:
     Indicators are computed on the reversed (oldest-first) sequence and then
     reversed back so that index *i* aligns with ``bars[i]`` (K1 at index 0).
     """
-    from pa_agent.indicators.ema import ema_full
     from pa_agent.indicators.atr import atr_full
+    from pa_agent.indicators.ema import ema_full
 
     # bars is newest-first; indicators need oldest-first input
     bars_asc = list(reversed(bars))
@@ -133,10 +147,18 @@ def build_display_frame(
     symbol: str,
     timeframe: str,
     *,
+    volume_meta: VolumeMeta,
     now_ms: int | None = None,
 ) -> KlineFrame | None:
     """Chart display frame — same semantics as AI (K1 = newest **closed** bar)."""
-    return build_analysis_frame(bars_raw, n, symbol, timeframe, now_ms=now_ms)
+    return build_analysis_frame(
+        bars_raw,
+        n,
+        symbol,
+        timeframe,
+        volume_meta=volume_meta,
+        now_ms=now_ms,
+    )
 
 
 def build_live_frame(
@@ -145,6 +167,7 @@ def build_live_frame(
     symbol: str,
     timeframe: str,
     *,
+    volume_meta: VolumeMeta,
     now_ms: int | None = None,
 ) -> KlineFrame | None:
     """Live chart frame: include the forming bar + *n_closed* closed bars.
@@ -192,6 +215,7 @@ def build_live_frame(
     return KlineFrame(
         symbol=symbol,
         timeframe=timeframe,
+        volume_meta=volume_meta,
         bars=tuple(rebased),
         indicators=indicators,
         snapshot_ts_local_ms=int(now_ms) if now_ms is not None else now_local_ms(),
@@ -222,6 +246,7 @@ def build_analysis_frame(
     symbol: str,
     timeframe: str,
     *,
+    volume_meta: VolumeMeta,
     now_ms: int | None = None,
     price_tick: float | None = None,
 ) -> KlineFrame | None:
@@ -266,6 +291,7 @@ def build_analysis_frame(
     return KlineFrame(
         symbol=symbol,
         timeframe=timeframe,
+        volume_meta=volume_meta,
         bars=tuple(rebased),
         indicators=indicators,
         snapshot_ts_local_ms=int(now_ms) if now_ms is not None else now_local_ms(),

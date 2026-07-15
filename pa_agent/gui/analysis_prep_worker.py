@@ -31,6 +31,7 @@ class AnalysisPrepWorker(QThread):
         symbol: str,
         timeframe: str,
         bar_count: int,
+        volume_meta: Any,
         now_ms: int,
         force_incremental: bool,
         incremental_threshold: int,
@@ -42,6 +43,7 @@ class AnalysisPrepWorker(QThread):
         self._symbol = symbol
         self._timeframe = timeframe
         self._bar_count = bar_count
+        self._volume_meta = volume_meta
         self._now_ms = now_ms
         self._force_incremental = force_incremental
         self._incremental_threshold = incremental_threshold
@@ -61,6 +63,7 @@ class AnalysisPrepWorker(QThread):
                 self._bar_count,
                 self._symbol,
                 self._timeframe,
+                volume_meta=self._volume_meta,
                 now_ms=self._now_ms,
             )
             if frame is None:

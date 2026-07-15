@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import math
 
-from hypothesis import given, settings as h_settings
+from hypothesis import given
+from hypothesis import settings as h_settings
 from hypothesis import strategies as st
 
-from pa_agent.data.base import KlineBar
+from pa_agent.data.base import KlineBar, VolumeMeta
 from pa_agent.data.snapshot import build_analysis_frame, build_live_frame
 
 
@@ -40,7 +41,7 @@ def _bars_with_forming(n_closed: int, extra: int) -> list[KlineBar]:
 def test_analysis_frame_seq_bijection(n: int, extra: int) -> None:
     """build_analysis_frame returns exactly n closed bars with seq 1..n."""
     raw = _bars_with_forming(n, extra)
-    frame = build_analysis_frame(raw, n, symbol="TEST", timeframe="1h")
+    frame = build_analysis_frame(raw, n, symbol="TEST", timeframe="1h", volume_meta=VolumeMeta("traded", "test", "test"))
     assert frame is not None
     assert len(frame.bars) == n
     seqs = {b.seq for b in frame.bars}
@@ -55,7 +56,7 @@ def test_analysis_frame_seq_bijection(n: int, extra: int) -> None:
 def test_live_frame_forming_bar_is_seq1(n: int, extra: int) -> None:
     """build_live_frame keeps forming bar at seq=1 when present at index 0."""
     raw = _bars_with_forming(n, extra)
-    frame = build_live_frame(raw, n, symbol="TEST", timeframe="1h")
+    frame = build_live_frame(raw, n, symbol="TEST", timeframe="1h", volume_meta=VolumeMeta("traded", "test", "test"))
     assert frame is not None
     assert frame.bars[0].seq == 1
     assert frame.bars[0].closed is False
@@ -69,7 +70,7 @@ def test_live_frame_forming_bar_is_seq1(n: int, extra: int) -> None:
 def test_analysis_frame_ts_strictly_decreasing(n: int, extra: int) -> None:
     """Closed bars are in strictly decreasing ts_open order (newest first)."""
     raw = _bars_with_forming(n, extra)
-    frame = build_analysis_frame(raw, n, symbol="TEST", timeframe="1h")
+    frame = build_analysis_frame(raw, n, symbol="TEST", timeframe="1h", volume_meta=VolumeMeta("traded", "test", "test"))
     assert frame is not None
     for i in range(len(frame.bars) - 1):
         assert frame.bars[i].ts_open > frame.bars[i + 1].ts_open

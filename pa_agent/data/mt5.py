@@ -18,6 +18,7 @@ from pa_agent.data.base import (
     DataSource,
     DataSourceTransientError,
     KlineBar,
+    VolumeMeta,
     normalize_kline_bar,
 )
 
@@ -56,6 +57,10 @@ class MT5Source(DataSource):
         self._symbol: str = ""
         self._timeframe: str = ""
         self._connected: bool = False
+
+    @property
+    def volume_meta(self) -> VolumeMeta:
+        return VolumeMeta(kind="tick", source="MT5", unit="ticks")
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 

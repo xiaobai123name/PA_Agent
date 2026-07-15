@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, call
 
 import pytest
 
-from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
+from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame, VolumeMeta
 from pa_agent.orchestrator.two_stage import TwoStageOrchestrator
 from pa_agent.util.threading import CancelToken, OrchestratorEvent
 
@@ -25,6 +25,7 @@ def _insufficient_frame_19bars() -> KlineFrame:
     n = 19
     bars = tuple(_make_bar(i + 1) for i in range(n))
     return KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="TEST", timeframe="1h", bars=bars, snapshot_ts_local_ms=1,
         indicators=IndicatorBundle(ema20=tuple([2000.0] * n), atr14=tuple([10.0] * n)),
     )
@@ -32,6 +33,7 @@ def _insufficient_frame_19bars() -> KlineFrame:
 
 def _insufficient_frame_empty() -> KlineFrame:
     return KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="TEST", timeframe="1h", bars=(), snapshot_ts_local_ms=1,
         indicators=IndicatorBundle(ema20=(), atr14=()),
     )
@@ -41,6 +43,7 @@ def _insufficient_frame_all_nan() -> KlineFrame:
     n = 20
     bars = tuple(_make_bar(i + 1) for i in range(n))
     return KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="TEST", timeframe="1h", bars=bars, snapshot_ts_local_ms=1,
         indicators=IndicatorBundle(
             ema20=tuple([float("nan")] * n),

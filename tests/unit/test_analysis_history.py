@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
+from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame, VolumeMeta
 from pa_agent.records.analysis_history import (
     compute_incremental_bar_delta,
     count_new_bars_since_record,
@@ -59,6 +59,7 @@ def _frame(timestamps: list[float]) -> KlineFrame:
         for i, ts in enumerate(timestamps)
     )
     return KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="XAUUSD",
         timeframe="1h",
         bars=bars,

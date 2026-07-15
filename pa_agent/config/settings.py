@@ -1,5 +1,6 @@
 """Pydantic settings models for PA Agent."""
 from __future__ import annotations
+
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -87,6 +88,8 @@ class GeneralSettings(BaseModel):
     stream_pane_font_pt: int = Field(default=11, ge=8, le=28)
     #: K 线图上 #序号 标签的字号（pt）
     chart_seq_label_font_pt: int = Field(default=7, ge=6, le=24)
+    #: Show deterministic SMC zones/events on the main chart.
+    show_smc_overlay: bool = False
     #: 两阶段分析结束后是否自动恢复 K 线图表实时刷新
     auto_resume_chart_after_analysis: bool = False
     #: 持续跟踪分析：有新K线收盘时自动触发新一轮分析

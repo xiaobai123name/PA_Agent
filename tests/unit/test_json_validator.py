@@ -93,6 +93,15 @@ def _valid_stage2_no_prediction() -> dict:
             "watch_points": [],
             "risk_assessment": "high",
             "invalidation_condition": "test",
+            "evidence_confluence": {
+                "pa": "neutral",
+                "smc": "unavailable",
+                "volume_price": "unavailable",
+                "smc_refs": [],
+                "volume_refs": [],
+                "conflicts": [],
+                "impact": "none",
+            },
         },
         "diagnosis_summary": {
             "cycle_position": "normal_channel",
@@ -158,6 +167,78 @@ def test_stage2_schema_accepts_valid_prediction():
     obj["next_cycle_prediction"] = _valid_cycle_prediction()
     result = _validator.validate("stage2", json.dumps(obj, ensure_ascii=False))
     assert isinstance(result, Ok), f"Expected Ok, got {result}"
+
+
+@pytest.mark.parametrize("impact", ["confirm", "invalidate"])
+def test_volume_price_cannot_be_the_only_decisive_evidence(impact):
+    obj = _valid_stage2_no_prediction()
+    obj["decision"]["evidence_confluence"] = {
+        "pa": "neutral",
+        "smc": "neutral",
+        "volume_price": "supports" if impact == "confirm" else "opposes",
+        "smc_refs": [],
+        "volume_refs": [],
+        "conflicts": [],
+        "impact": impact,
+    }
+
+    result = _validator.validate("stage2", json.dumps(obj, ensure_ascii=False))
+    assert isinstance(result, ValidationError)
+    assert "cannot" in result.message
+
+
+def test_smc_and_volume_references_must_exist_in_program_features():
+    from tests.integration.conftest import VALID_STAGE1, VALID_STAGE2, make_frame
+
+    stage1 = json.loads(json.dumps(VALID_STAGE1))
+    stage1["smc_context"]["referenced_ids"] = ["missing-smc-id"]
+    stage1_result = _validator.validate(
+        "stage1",
+        json.dumps(stage1, ensure_ascii=False),
+        kline_frame=make_frame(),
+    )
+    assert isinstance(stage1_result, ValidationError)
+    assert "unknown id" in stage1_result.message
+
+    valid_stage1 = _validator.validate(
+        "stage1",
+        json.dumps(VALID_STAGE1, ensure_ascii=False),
+        kline_frame=make_frame(),
+    )
+    assert isinstance(valid_stage1, Ok)
+    stage2 = json.loads(json.dumps(VALID_STAGE2))
+    stage2["decision"]["evidence_confluence"]["volume_refs"] = [
+        "missing-volume-id"
+    ]
+    stage2_result = _validator.validate(
+        "stage2",
+        json.dumps(stage2, ensure_ascii=False),
+        kline_frame=make_frame(),
+        stage1_json=valid_stage1.obj,
+    )
+    assert isinstance(stage2_result, ValidationError)
+    assert "unknown id" in stage2_result.message
+
+
+def test_smc_reference_ids_include_pivots_and_dealing_range():
+    from pa_agent.ai.json_validator import _program_feature_ids
+
+    stage1 = {
+        "program_features": {
+            "smc": {
+                "pivots": [{"id": "pivot:high:1000"}],
+                "events": [],
+                "fvgs": [],
+                "order_blocks": [],
+                "dealing_range": {"id": "dealing_range:900:1000"},
+            }
+        }
+    }
+
+    assert _program_feature_ids(stage1, "smc") == {
+        "pivot:high:1000",
+        "dealing_range:900:1000",
+    }
 
 
 def test_stage2_normalizer_aligns_prediction_direction_to_argmax():

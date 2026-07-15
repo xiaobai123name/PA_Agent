@@ -7,7 +7,7 @@ import random
 from pathlib import Path
 
 from pa_agent.config.paths import RECORDS_PENDING_DIR
-from pa_agent.data.base import KlineBar, KlineFrame
+from pa_agent.data.base import KlineBar, KlineFrame, VolumeMeta
 from pa_agent.data.snapshot import compute_indicators
 from pa_agent.records.schema import AnalysisRecord
 from pa_agent.util.timefmt import now_local_ms
@@ -132,6 +132,11 @@ def frame_from_record_klines(
     return KlineFrame(
         symbol=symbol,
         timeframe=timeframe,
+        volume_meta=VolumeMeta(
+            kind="unavailable",
+            source="legacy_record",
+            unit="unknown",
+        ),
         bars=tuple(rebased),
         indicators=compute_indicators(rebased),
         snapshot_ts_local_ms=snapshot_ts_local_ms or now_local_ms(),

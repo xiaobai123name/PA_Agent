@@ -13,6 +13,8 @@ from unittest.mock import MagicMock, call
 
 import pytest
 
+from pa_agent.data.base import VolumeMeta
+
 # Guard: skip the whole module if PyQt6 is not available
 pytest.importorskip("PyQt6")
 
@@ -23,9 +25,7 @@ from pa_agent.app_context import AppContext
 from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
 from pa_agent.util.threading import CancelToken, OrchestratorEvent
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
 from tests.fixtures.ai_payloads import VALID_STAGE1, VALID_STAGE2
 
 
@@ -40,7 +40,7 @@ def _make_frame() -> KlineFrame:
             low=1990.0 + (n - 1 - i) * 2.0,
             close=2005.0 + (n - 1 - i) * 2.0,
             volume=100.0,
-            closed=(i > 0),
+            closed=True,
         )
         for i in range(n)
     )
@@ -49,6 +49,7 @@ def _make_frame() -> KlineFrame:
         atr14=tuple([10.0] * n),
     )
     return KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="XAUUSD",
         timeframe="1h",
         bars=bars,
@@ -145,8 +146,8 @@ class TestSwitchMidAnalysis:
         mock_client.stream_chat.side_effect = chat_dispatch
 
         # Wire up the orchestrator components
-        from tests.fixtures.validators import schema_test_validator
         from pa_agent.ai.router import route_strategy_files
+        from tests.fixtures.validators import schema_test_validator
 
         app_ctx.client = mock_client
         app_ctx.assembler = MagicMock()
@@ -211,10 +212,10 @@ class TestSwitchMidAnalysis:
         self, qtbot, app_ctx, pending_writer
     ):
         """save_partial must be called with reason='user_switched' on symbol switch."""
-        from pa_agent.gui.main_window import MainWindow, _AnalysisWorker
-        from tests.fixtures.validators import schema_test_validator
         from pa_agent.ai.router import route_strategy_files
+        from pa_agent.gui.main_window import MainWindow, _AnalysisWorker
         from pa_agent.orchestrator.two_stage import TwoStageOrchestrator
+        from tests.fixtures.validators import schema_test_validator
 
         stage2_started = __import__("threading").Event()
         call_count = [0]
@@ -325,10 +326,10 @@ class TestSwitchMidAnalysis:
         self, qtbot, app_ctx, pending_writer
     ):
         """cancel_token.is_set() must become True within 100ms of triggering switch."""
-        from pa_agent.gui.main_window import MainWindow, _AnalysisWorker
-        from tests.fixtures.validators import schema_test_validator
         from pa_agent.ai.router import route_strategy_files
+        from pa_agent.gui.main_window import MainWindow, _AnalysisWorker
         from pa_agent.orchestrator.two_stage import TwoStageOrchestrator
+        from tests.fixtures.validators import schema_test_validator
 
         stage2_started = __import__("threading").Event()
         call_count = [0]

@@ -19,7 +19,7 @@ from pa_agent.ai.decision_nodes import (
     BAR_COUNT_THRESHOLD,
     check_preflight_data,
 )
-from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
+from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame, VolumeMeta
 
 
 def _make_bar(seq: int, *, high: float = 2010.0, low: float = 1990.0) -> KlineBar:
@@ -40,6 +40,7 @@ def _make_frame(n: int = 20, *, all_nan_ema: bool = False, all_nan_atr: bool = F
     ema = tuple([float("nan")] * n if all_nan_ema else [2000.0] * n)
     atr = tuple([float("nan")] * n if all_nan_atr else [10.0] * n)
     return KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="TEST",
         timeframe="1h",
         bars=bars,
@@ -58,6 +59,7 @@ def test_none_frame_returns_bars_empty():
 
 def test_empty_bars_returns_bars_empty():
     frame = KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="TEST", timeframe="1h",
         bars=(),
         snapshot_ts_local_ms=1,
@@ -73,6 +75,7 @@ def test_bar_with_high_less_than_low():
         KlineBar(seq=1, ts_open=1.0, open=100.0, high=90.0, low=110.0, close=100.0, volume=1.0, closed=True),
     ) + tuple(_make_bar(i + 2) for i in range(20))
     frame = KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="TEST", timeframe="1h",
         bars=bars,
         snapshot_ts_local_ms=1,
@@ -193,6 +196,7 @@ def test_property1_sufficient_frame_passes(n: int) -> None:
     """Property 1: frames with n>=20 valid bars and valid indicators pass preflight."""
     bars = tuple(_make_bar(i + 1) for i in range(n))
     frame = KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="TEST", timeframe="1h", bars=bars, snapshot_ts_local_ms=1,
         indicators=IndicatorBundle(ema20=tuple([2000.0] * n), atr14=tuple([10.0] * n)),
     )
@@ -213,6 +217,7 @@ def test_property1_insufficient_bars_fails(n: int) -> None:
     ema = tuple([2000.0] * n)
     atr = tuple([10.0] * n)
     frame = KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="TEST", timeframe="1h", bars=bars, snapshot_ts_local_ms=1,
         indicators=IndicatorBundle(ema20=ema, atr14=atr),
     )
@@ -232,6 +237,7 @@ def test_property1_all_nan_indicators_fails(n: int) -> None:
     """Property 1: frames with n>=20 but all NaN indicators fail with indicators_all_nan."""
     bars = tuple(_make_bar(i + 1) for i in range(n))
     frame = KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="TEST", timeframe="1h", bars=bars, snapshot_ts_local_ms=1,
         indicators=IndicatorBundle(
             ema20=tuple([float("nan")] * n),

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from pa_agent.ai.json_validator import JsonValidator
-from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
+from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame, VolumeMeta
 from pa_agent.util.price_tick import (
     breakout_entry_target,
     format_breakout_tick_hint,
@@ -17,6 +17,7 @@ def _frame() -> KlineFrame:
         KlineBar(2, 0, 10.00, 10.15, 9.95, 10.10, 1),
     )
     return KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="XAUUSDT",
         timeframe="15m",
         bars=bars,
@@ -52,6 +53,7 @@ def test_tick_hint_states_that_program_rejects_instead_of_rewriting() -> None:
 
 def test_explicit_exchange_tick_overrides_float_precision_artifacts() -> None:
     frame = KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="BTCUSDT",
         timeframe="15m",
         bars=(
@@ -87,6 +89,7 @@ def test_explicit_exchange_tick_overrides_float_precision_artifacts() -> None:
 
 def test_invalid_explicit_exchange_tick_is_exposed() -> None:
     frame = KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="BTCUSDT",
         timeframe="15m",
         bars=_frame().bars,

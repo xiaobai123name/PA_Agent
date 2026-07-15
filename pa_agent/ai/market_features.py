@@ -10,6 +10,8 @@ import math
 from dataclasses import dataclass
 from typing import Any
 
+from pa_agent.ai.smc_features import compute_smc_features
+from pa_agent.ai.volume_price_features import compute_volume_price_features
 from pa_agent.data.base import KlineBar, KlineFrame
 from pa_agent.util.price_tick import infer_price_tick_from_frame
 
@@ -296,6 +298,8 @@ def render_simple_market_features(features: SimpleMarketFeatures) -> str:
 def build_program_features_dict(frame: KlineFrame) -> dict[str, Any]:
     """Compact program-computed facts for stage1_json['program_features']."""
     features = compute_simple_market_features(frame)
+    smc = compute_smc_features(frame)
+    volume_price = compute_volume_price_features(frame, smc_features=smc)
     return {
         "barbwire_score": features.barbwire_score,
         "barbwire_candidate": features.barbwire_candidate,
@@ -303,6 +307,8 @@ def build_program_features_dict(frame: KlineFrame) -> dict[str, Any]:
         "price_position": features.price_position,
         "zone": features.zone,
         "swing_structure": features.swing_structure,
+        "smc": smc,
+        "volume_price": volume_price,
     }
 
 

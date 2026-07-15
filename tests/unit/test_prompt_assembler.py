@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import json
 import math
-import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from pa_agent.ai.prompt_assembler import PromptAssembler
-from pa_agent.data.base import KlineBar, KlineFrame, IndicatorBundle
+from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame, VolumeMeta
 
 
 def _make_frame(n: int = 5) -> KlineFrame:
@@ -21,7 +22,7 @@ def _make_frame(n: int = 5) -> KlineFrame:
             low=2590.0 + i,
             close=2605.0 + i,
             volume=1000.0,
-            closed=(i != 0),
+            closed=True,
         )
         for i in range(n)
     )
@@ -30,6 +31,7 @@ def _make_frame(n: int = 5) -> KlineFrame:
         atr14=tuple(5.0 for _ in range(n)),
     )
     return KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="XAUUSD",
         timeframe="1h",
         bars=bars,
@@ -270,13 +272,14 @@ def test_kline_table_contains_nan_as_na(assembler: PromptAssembler):
     """K-line table renders NaN indicator values as 'N/A'."""
     bars = (
         KlineBar(seq=1, ts_open=1_700_000_000.0, open=2600.0, high=2610.0,
-                 low=2590.0, close=2605.0, volume=1000.0, closed=False),
+                 low=2590.0, close=2605.0, volume=1000.0, closed=True),
     )
     indicators = IndicatorBundle(
         ema20=(float("nan"),),
         atr14=(float("nan"),),
     )
     frame = KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="XAUUSD", timeframe="1h", bars=bars,
         indicators=indicators, snapshot_ts_local_ms=1_700_000_000_000,
     )
@@ -513,6 +516,7 @@ def test_incremental_stage1_raises_without_previous_messages(
 ):
     """Incremental Stage 1 raises ValueError when previous record lacks messages."""
     import pytest
+
     from pa_agent.records.schema import AnalysisRecord, RecordMeta
 
     frame = _make_frame(5)
@@ -548,6 +552,7 @@ def test_incremental_stage1_raises_without_previous_response(
 ):
     """Incremental Stage 1 raises ValueError when previous record lacks response content."""
     import pytest
+
     from pa_agent.records.schema import AnalysisRecord, RecordMeta
 
     frame = _make_frame(5)

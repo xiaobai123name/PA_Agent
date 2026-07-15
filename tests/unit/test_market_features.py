@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-from pa_agent.ai.market_features import compute_simple_market_features, render_simple_market_features
-from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
+from pa_agent.ai.market_features import (
+    compute_simple_market_features,
+    render_simple_market_features,
+)
+from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame, VolumeMeta
 
 
 def _frame(*bars: KlineBar) -> KlineFrame:
     n = len(bars)
     return KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="XAUUSD",
         timeframe="5m",
         bars=bars,

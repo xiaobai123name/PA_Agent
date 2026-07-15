@@ -5,14 +5,14 @@ import json
 
 from pa_agent.ai.json_validator import JsonValidator, ValidationError
 from pa_agent.config.settings import ValidationSettings
-from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
+from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame, VolumeMeta
 from pa_agent.util.trade_metrics import validate_limit_order_k1_freshness
-
 from tests.unit.test_trade_metrics_validation import _stage2_trade_obj
 
 
 def _frame_k1(*, high: float, low: float, close: float) -> KlineFrame:
     return KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="XAUUSD",
         timeframe="5m",
         bars=(

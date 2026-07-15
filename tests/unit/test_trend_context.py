@@ -4,10 +4,10 @@ from __future__ import annotations
 from pa_agent.ai.decision_nodes import judge_always_in, judge_direction
 from pa_agent.ai.trend_context import (
     build_trend_context,
-    detect_recent_spike,
     compute_background_direction,
+    detect_recent_spike,
 )
-from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
+from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame, VolumeMeta
 
 
 def _bar(seq: int, close: float, *, open_: float | None = None) -> KlineBar:
@@ -37,6 +37,7 @@ def _frame_with_regimes() -> KlineFrame:
     ema = tuple(2050.0 - i * 1.5 for i in range(n))
     atr = tuple([12.0] * n)
     return KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="TEST",
         timeframe="1h",
         bars=tuple(bars),

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pa_agent.ai.stage1_normalizer import normalize_stage1
 from pa_agent.ai.structure_levels import refresh_stage1_support_resistance
-from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame
+from pa_agent.data.base import IndicatorBundle, KlineBar, KlineFrame, VolumeMeta
 
 
 def _frame_from_closes(closes: list[float]) -> KlineFrame:
@@ -22,6 +22,7 @@ def _frame_from_closes(closes: list[float]) -> KlineFrame:
             )
         )
     return KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="BTCUSDm",
         timeframe="5m",
         bars=tuple(bars),

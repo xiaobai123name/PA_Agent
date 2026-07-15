@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from PyQt6.QtCore import QThread, QTimer, pyqtSignal, QObject
+from PyQt6.QtCore import QObject, Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QCloseEvent, QShowEvent
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -24,7 +24,6 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from PyQt6.QtCore import Qt
 
 from pa_agent.app_context import AppContext
 from pa_agent.gui.validation_debug_dialog import show_validation_debug_dialog
@@ -459,8 +458,8 @@ class MainWindow(QMainWindow):
         # Restore saved exchange from settings, default to auto.
         saved_ex = ""
         try:
-            from pa_agent.config.settings import load_settings
             from pa_agent.config.paths import SETTINGS_JSON_PATH
+            from pa_agent.config.settings import load_settings
             _s = load_settings(SETTINGS_JSON_PATH)
             saved_ex = getattr(_s.general, 'last_tradingview_exchange', '') or ''
         except Exception:
@@ -614,6 +613,15 @@ class MainWindow(QMainWindow):
         outer_layout.addWidget(self._disclaimer_label)
 
         status_row = QHBoxLayout()
+        self._smc_overlay_checkbox = QCheckBox("SMC图层")
+        self._smc_overlay_checkbox.setChecked(
+            False
+            if _settings is None
+            else bool(_settings.general.show_smc_overlay)
+        )
+        self._smc_overlay_checkbox.setToolTip("显示最近一次分析的 BOS/CHoCH、FVG、OB 与扫流动性图层")
+        self._smc_overlay_checkbox.toggled.connect(self._on_smc_overlay_toggled)
+        status_row.addWidget(self._smc_overlay_checkbox)
         status_row.addStretch()
         self._last_refresh_ts: float = 0.0
         self._refresh_elapsed_label = QLabel("距上次刷新: —")
@@ -640,6 +648,7 @@ class MainWindow(QMainWindow):
         workbench = QSplitter(Qt.Orientation.Horizontal)
 
         self._chart_widget = ChartWidget()
+        self._chart_widget.set_smc_visible(self._smc_overlay_checkbox.isChecked())
         self._chart_widget.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
@@ -997,7 +1006,7 @@ class MainWindow(QMainWindow):
         
         Called from worker thread; use invokeMethod to update GUI on main thread.
         """
-        from PyQt6.QtCore import Qt, QMetaObject, Q_ARG
+        from PyQt6.QtCore import Q_ARG, QMetaObject, Qt
         timeframe = self._tf_combo.currentText() if hasattr(self, "_tf_combo") else ""
         msg = f"TV 自动探测 {label} {timeframe}…"
         # Update status bar on main thread to avoid race with other updates
@@ -2222,8 +2231,8 @@ class MainWindow(QMainWindow):
         if settings is not None:
             try:
                 settings.general.keep_analysis = enabled
-                from pa_agent.config.settings import save_settings
                 from pa_agent.config.paths import SETTINGS_JSON_PATH
+                from pa_agent.config.settings import save_settings
                 save_settings(settings, SETTINGS_JSON_PATH)
             except Exception:  # noqa: BLE001
                 pass
@@ -2630,6 +2639,7 @@ class MainWindow(QMainWindow):
     def _on_demo_replay_done(self) -> None:
         """End demo analysis-in-progress state after replay completes."""
         from pathlib import Path
+
         from PyQt6.QtCore import QTimer
 
         self._analysis_in_progress = False
@@ -2859,6 +2869,7 @@ class MainWindow(QMainWindow):
             symbol=symbol,
             timeframe=timeframe,
             bar_count=bar_count,
+            volume_meta=self._current_volume_meta(),
             now_ms=self._reference_now_ms(),
             force_incremental=force_incremental and not independent_analysis,
             incremental_threshold=threshold,
@@ -3203,6 +3214,7 @@ class MainWindow(QMainWindow):
             from pa_agent.gui.stage2_payload import prepare_stage2_for_ui
 
             stage1_diag = self._current_stage1_diagnosis()
+            self._apply_smc_features(stage1_diag)
             inner = prepare_stage2_for_ui(
                 decision,
                 stage1_json=stage1_diag or None,
@@ -3319,6 +3331,7 @@ class MainWindow(QMainWindow):
         else:
             self._chart_widget.clear_decision_overlay()
             self._chart_widget.clear_support_resistance()
+            self._chart_widget.clear_smc_overlay()
             self._decision_panel.clear()
             self._future_trend_panel.clear()
             self._decision_tree_panel.clear()
@@ -3520,8 +3533,8 @@ class MainWindow(QMainWindow):
             # Persist to settings (same as _on_keep_analysis_checkbox_changed)
             try:
                 settings.general.keep_analysis = False
-                from pa_agent.config.settings import save_settings
                 from pa_agent.config.paths import SETTINGS_JSON_PATH
+                from pa_agent.config.settings import save_settings
                 save_settings(settings, SETTINGS_JSON_PATH)
                 logger.info(
                     "持续跟踪分析已因 %s 重试自动关闭", stage
@@ -3641,6 +3654,7 @@ class MainWindow(QMainWindow):
         s1_diag = getattr(record, "stage1_diagnosis", None) or {}
         self._last_analysis_record = record
         self._last_stage1_diagnosis = s1_diag if isinstance(s1_diag, dict) else None
+        self._apply_smc_features(s1_diag if isinstance(s1_diag, dict) else None)
         s2_full = getattr(record, "stage2_decision", None)
         if s2_full:
             from pa_agent.gui.stage2_payload import prepare_stage2_for_ui
@@ -3909,7 +3923,9 @@ class MainWindow(QMainWindow):
                 return
             try:
                 from pa_agent.notify.feishu_notifier import send_order_signal as send_feishu_order
-                from pa_agent.notify.pushplus_notifier import send_order_signal as send_pushplus_order
+                from pa_agent.notify.pushplus_notifier import (
+                    send_order_signal as send_pushplus_order,
+                )
                 from pa_agent.records.trade_logger import _TRADE_RECORDS_DIR
 
                 safe_sym = meta_symbol.replace("/", "-").replace("\\", "-")
@@ -4094,8 +4110,8 @@ class MainWindow(QMainWindow):
 
     def _open_ai_model_settings_dialog(self, *, focus_api_key: bool = False) -> None:
         """打开 AI 模型设置对话框."""
-        from pa_agent.gui.ai_model_settings_dialog import AIModelSettingsDialog
         from pa_agent.config.settings import Settings
+        from pa_agent.gui.ai_model_settings_dialog import AIModelSettingsDialog
         from pa_agent.util.logging import update_api_key
 
         settings: Settings = self._ctx.settings  # type: ignore[assignment]
@@ -4123,8 +4139,8 @@ class MainWindow(QMainWindow):
 
     def _open_feishu_settings_dialog(self) -> None:
         """打开飞书机器人设置对话框."""
-        from pa_agent.gui.feishu_settings_dialog import FeishuSettingsDialog
         from pa_agent.config.settings import Settings
+        from pa_agent.gui.feishu_settings_dialog import FeishuSettingsDialog
 
         settings: Settings = self._ctx.settings  # type: ignore[assignment]
         if settings is None:
@@ -4135,8 +4151,8 @@ class MainWindow(QMainWindow):
 
     def _open_general_settings_dialog(self) -> None:
         """打开通用设置对话框."""
-        from pa_agent.gui.general_settings_dialog import GeneralSettingsDialog
         from pa_agent.config.settings import Settings
+        from pa_agent.gui.general_settings_dialog import GeneralSettingsDialog
 
         settings: Settings = self._ctx.settings  # type: ignore[assignment]
         if settings is None:
@@ -4298,11 +4314,11 @@ class MainWindow(QMainWindow):
             return
 
         try:
+            from pa_agent.data.snapshot import INDICATOR_WARMUP_BARS
             from pa_agent.records.analysis_history import (
                 compute_incremental_bar_delta,
                 find_latest_successful_record,
             )
-            from pa_agent.data.snapshot import INDICATOR_WARMUP_BARS
 
             bar_count = self._analysis_bar_count()
             frame = self._build_chart_frame_from_bars(
@@ -4358,15 +4374,49 @@ class MainWindow(QMainWindow):
         symbol = self._symbol_combo.currentText().strip()
         timeframe = self._tf_combo.currentText()
         now_ms = self._reference_now_ms()
+        volume_meta = self._current_volume_meta()
         if not bars_raw:
             return None
         if include_forming:
             return build_live_frame(
-                bars_raw, n, symbol, timeframe, now_ms=now_ms
+                bars_raw,
+                n,
+                symbol,
+                timeframe,
+                volume_meta=volume_meta,
+                now_ms=now_ms,
             )
         return build_display_frame(
-            bars_raw, n, symbol, timeframe, now_ms=now_ms
+            bars_raw,
+            n,
+            symbol,
+            timeframe,
+            volume_meta=volume_meta,
+            now_ms=now_ms,
         )
+
+    def _current_volume_meta(self) -> Any:
+        source = getattr(self._ctx, "data_source", None)
+        if source is None:
+            raise RuntimeError("当前数据源不存在，无法确定成交量语义")
+        return source.volume_meta
+
+    def _on_smc_overlay_toggled(self, checked: bool) -> None:
+        chart = getattr(self, "_chart_widget", None)
+        if chart is not None:
+            chart.set_smc_visible(checked)
+        settings = getattr(self._ctx, "settings", None)
+        if settings is None:
+            raise RuntimeError("设置对象不存在，无法持久化 SMC 图层状态")
+        settings.general.show_smc_overlay = bool(checked)
+        from pa_agent.config.settings import save_settings
+
+        save_settings(settings)
+
+    def _apply_smc_features(self, stage1_diag: dict | None) -> None:
+        program = stage1_diag.get("program_features") if isinstance(stage1_diag, dict) else None
+        smc = program.get("smc") if isinstance(program, dict) else None
+        self._chart_widget.set_smc_features(smc if isinstance(smc, dict) else None)
 
     def _take_snapshot(
         self,

@@ -1,7 +1,7 @@
 """Tests for build_analysis_frame when the buffer has no forming bar."""
 from __future__ import annotations
 
-from pa_agent.data.base import KlineBar
+from pa_agent.data.base import KlineBar, VolumeMeta
 from pa_agent.data.snapshot import build_analysis_frame, build_live_frame
 
 
@@ -28,7 +28,7 @@ def test_analysis_frame_without_forming_uses_newest_closed_as_k1() -> None:
         _bar(2, float(now_ms - 960_000), close=9.0),
         _bar(3, float(now_ms - 1_860_000), close=8.0),
     ]
-    frame = build_analysis_frame(bars, 3, "XAUUSD", "15m", now_ms=now_ms)
+    frame = build_analysis_frame(bars, 3, "XAUUSD", "15m", volume_meta=VolumeMeta("traded", "test", "test"), now_ms=now_ms)
     assert frame is not None
     assert len(frame.bars) == 3
     assert frame.bars[0].close == 10.0
@@ -55,7 +55,7 @@ def test_analysis_frame_with_forming_skips_index_zero() -> None:
         _bar(1, float(now_ms - 900_000), close=10.0),
         _bar(2, float(now_ms - 1_800_000), close=9.0),
     ]
-    frame = build_analysis_frame(bars, 2, "XAUUSD", "15m", now_ms=now_ms)
+    frame = build_analysis_frame(bars, 2, "XAUUSD", "15m", volume_meta=VolumeMeta("traded", "test", "test"), now_ms=now_ms)
     assert frame is not None
     assert len(frame.bars) == 2
     assert frame.bars[0].close == 10.0
@@ -66,7 +66,7 @@ def test_live_frame_without_forming_does_not_mark_k1_as_forming() -> None:
 
     now_ms = int(time.time() * 1000)
     bars = [_bar(1, float(now_ms - 60_000)), _bar(2, float(now_ms - 960_000))]
-    frame = build_live_frame(bars, 2, "XAUUSD", "15m", now_ms=now_ms)
+    frame = build_live_frame(bars, 2, "XAUUSD", "15m", volume_meta=VolumeMeta("traded", "test", "test"), now_ms=now_ms)
     assert frame is not None
     assert all(b.closed for b in frame.bars)
 
@@ -93,7 +93,7 @@ def test_analysis_keeps_head_when_closed_false_but_period_ended() -> None:
     from pa_agent.data.bar_close_wait import has_forming_bar_at_head
 
     assert not has_forming_bar_at_head(bars, "15m", now_ms=now_ms)
-    frame = build_analysis_frame(bars, 3, "688981", "15m", now_ms=now_ms)
+    frame = build_analysis_frame(bars, 3, "688981", "15m", volume_meta=VolumeMeta("traded", "test", "test"), now_ms=now_ms)
     assert frame is not None
     assert frame.bars[0].close == 10.5
     assert frame.bars[0].ts_open == ts_open

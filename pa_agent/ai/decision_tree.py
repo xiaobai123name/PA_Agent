@@ -396,6 +396,12 @@ def build_stage2_gate_wait_response(stage1_json: dict[str, Any]) -> dict[str, An
     cycle = stage1_json.get("cycle_position", "")
     direction = stage1_json.get("direction", "")
     key_signals = stage1_json.get("key_signals") or []
+    smc_context = stage1_json.get("smc_context") or {}
+    volume_context = stage1_json.get("volume_price_context") or {}
+
+    def _stage2_confluence(value: object) -> str:
+        text = str(value or "neutral")
+        return text if text in {"supports", "opposes", "neutral", "unavailable"} else "neutral"
 
     return {
         "decision": {
@@ -424,6 +430,15 @@ def build_stage2_gate_wait_response(stage1_json: dict[str, Any]) -> dict[str, An
             "watch_points": ["等待结构明朗或闸门节点转为可继续"],
             "risk_assessment": stage1_json.get("risk_warning") or "闸门等待",
             "invalidation_condition": None,
+            "evidence_confluence": {
+                "pa": "neutral",
+                "smc": _stage2_confluence(smc_context.get("confluence")),
+                "volume_price": _stage2_confluence(volume_context.get("confluence")),
+                "smc_refs": list(smc_context.get("referenced_ids") or []),
+                "volume_refs": list(volume_context.get("referenced_ids") or []),
+                "conflicts": [],
+                "impact": "none",
+            },
         },
         "diagnosis_summary": {
             "cycle_position": cycle,

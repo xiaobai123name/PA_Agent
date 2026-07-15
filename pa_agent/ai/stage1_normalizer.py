@@ -559,12 +559,9 @@ def normalize_stage1(
     from pa_agent.ai.pattern_routing import ensure_detected_patterns_coherent
 
     if kline_frame is not None:
-        try:
-            from pa_agent.ai.market_features import build_program_features_dict
+        from pa_agent.ai.market_features import build_program_features_dict
 
-            out["program_features"] = build_program_features_dict(kline_frame)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("build_program_features_dict failed: %s", exc)
+        out["program_features"] = build_program_features_dict(kline_frame)
 
     ensure_detected_patterns_coherent(out, kline_frame=kline_frame)
 
