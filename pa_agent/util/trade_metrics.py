@@ -1,6 +1,7 @@
 """Risk/reward and estimated win-rate helpers for trading decisions."""
 from __future__ import annotations
 
+import math
 from typing import Any
 
 
@@ -82,6 +83,12 @@ def format_estimated_win_rate_reasoning(decision: dict[str, Any]) -> str:
 MIN_RISK_REWARD_RATIO = 1.0
 # Review threshold only. It is not an acceptance cap and never changes a price.
 MAX_TP1_RISK_REWARD_RATIO = 1.5
+# Stop distance must clear single-bar noise: entry↔stop must be at least this
+# fraction of the volatility baseline (ATR14; fallback median closed-bar range).
+MIN_STOP_DISTANCE_ATR_FRACTION = 0.35
+# Closed bars sampled for the median-range fallback baseline.
+_STOP_NOISE_LOOKBACK = 20
+_STOP_NOISE_MIN_BARS = 5
 
 _HIGH_RR_REVIEW_FIELDS = (
     "stop_loss_basis",
@@ -284,6 +291,76 @@ def validate_limit_order_k1_freshness(
     return errors
 
 
+def _volatility_baseline(kline_frame: Any) -> float | None:
+    """Recent volatility baseline: ATR14 when finite, else median closed-bar range."""
+    indicators = getattr(kline_frame, "indicators", None) if kline_frame is not None else None
+    atr14 = getattr(indicators, "atr14", None) if indicators is not None else None
+    if atr14:
+        for raw in atr14[:2]:
+            try:
+                val = float(raw)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(val) and val > 0:
+                return val
+
+    bars = getattr(kline_frame, "bars", None) if kline_frame is not None else None
+    if not bars:
+        return None
+    ranges: list[float] = []
+    for bar in bars:
+        if not bool(getattr(bar, "closed", True)):
+            continue
+        try:
+            span = float(bar.high) - float(bar.low)
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if span > 0:
+            ranges.append(span)
+        if len(ranges) >= _STOP_NOISE_LOOKBACK:
+            break
+    if len(ranges) < _STOP_NOISE_MIN_BARS:
+        return None
+    ranges.sort()
+    mid = len(ranges) // 2
+    if len(ranges) % 2:
+        return ranges[mid]
+    return (ranges[mid - 1] + ranges[mid]) / 2.0
+
+
+def validate_stop_distance_floor(
+    decision: dict[str, Any],
+    kline_frame: Any,
+) -> list[str]:
+    """Reject noise stops: entry↔stop distance below a fraction of recent volatility.
+
+    A structurally correct invalidation level still yields a noise stop when the
+    entry is placed on top of it; the floor guards distance, not the level.
+    """
+    try:
+        entry = float(decision.get("entry_price"))
+        sl = float(decision.get("stop_loss_price"))
+    except (TypeError, ValueError):
+        return []
+
+    distance = abs(entry - sl)
+    if distance <= 0:
+        return []
+    baseline = _volatility_baseline(kline_frame)
+    if baseline is None:
+        return []
+    floor = baseline * MIN_STOP_DISTANCE_ATR_FRACTION
+    if distance >= floor:
+        return []
+    return [
+        f"decision.stop_loss_price: stop distance {distance:.6g} is below the noise "
+        f"floor {floor:.6g} ({MIN_STOP_DISTANCE_ATR_FRACTION:.0%} of recent volatility "
+        f"{baseline:.6g}); entry sits too close to the invalidation level — wait for a "
+        "deeper pullback entry, use a wider structural stop (swing extreme), or set "
+        "order_type=不下单; prices are not auto-adjusted"
+    ]
+
+
 def validate_take_profit_2_geometry(
     decision: dict[str, Any],
 ) -> list[str]:
@@ -335,7 +412,7 @@ def validate_order_trade_metrics(
     kline_frame: Any = None,
     bar_analysis: dict[str, Any] | None = None,
 ) -> list[str]:
-    """Validate trade geometry, RR floor, review evidence, and trader equation.
+    """Validate trade geometry, RR floor, stop noise floor, review, and trader equation.
 
     The stop is a structural invalidation price supplied by the decision. RR never
     rewrites entry, TP1, TP2, or stop. High RR is allowed after explicit review.
@@ -389,6 +466,7 @@ def validate_order_trade_metrics(
                 decision, kline_frame, bar_analysis=bar_analysis
             )
         )
+        errors.extend(validate_stop_distance_floor(decision, kline_frame))
 
     errors.extend(validate_take_profit_2_geometry(decision))
 
