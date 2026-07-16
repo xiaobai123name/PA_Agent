@@ -9,6 +9,7 @@ from pa_agent.util.trade_metrics import (
     compute_risk_reward,
     passes_trader_equation,
     validate_order_trade_metrics,
+    validate_stop_distance_floor,
 )
 from tests.fixtures.validators import schema_test_validator
 
@@ -601,3 +602,58 @@ def test_planned_limit_allows_k1_wick_touch_entry() -> None:
         decision, _frame(), bar_analysis=bar_analysis
     )
     assert not errors, errors
+
+
+def test_stop_distance_floor_rejects_noise_stop() -> None:
+    """Entry parked on the invalidation level yields a noise stop → rejected."""
+    decision = {"entry_price": 103.0, "stop_loss_price": 102.5}
+    errors = validate_stop_distance_floor(decision, _frame())  # ATR 2.0 → floor 0.7
+    assert len(errors) == 1
+    assert "noise floor" in errors[0]
+
+
+def test_stop_distance_floor_accepts_structural_distance() -> None:
+    decision = {"entry_price": 103.0, "stop_loss_price": 102.2}  # 0.8 ≥ 0.7
+    assert validate_stop_distance_floor(decision, _frame()) == []
+
+
+def test_stop_distance_floor_falls_back_to_median_bar_range() -> None:
+    """NaN ATR → median closed-bar high-low range becomes the baseline."""
+    nan = float("nan")
+    bars = tuple(
+        KlineBar(
+            seq=i, ts_open=float(-i), open=100.0, high=102.0, low=100.0,
+            close=101.0, volume=1, closed=True,
+        )
+        for i in range(1, 9)
+    )  # every bar range 2.0 → median 2.0 → floor 0.7
+    frame = KlineFrame(
+        symbol="X",
+        timeframe="5m",
+        bars=bars,
+        indicators=IndicatorBundle(ema20=(nan,) * len(bars), atr14=(nan,) * len(bars)),
+        snapshot_ts_local_ms=1,
+    )
+    narrow = {"entry_price": 103.0, "stop_loss_price": 102.6}
+    structural = {"entry_price": 103.0, "stop_loss_price": 102.0}
+    assert validate_stop_distance_floor(narrow, frame)
+    assert validate_stop_distance_floor(structural, frame) == []
+
+
+def test_stop_distance_floor_skips_without_volatility_data() -> None:
+    decision = {"entry_price": 103.0, "stop_loss_price": 102.9}
+    assert validate_stop_distance_floor(decision, None) == []
+
+
+def test_stage2_validator_rejects_noise_stop_without_coercion() -> None:
+    """Regression: 21-point stop on ~240-point bars once passed as RR 9.5 (BTCUSDT 15m)."""
+    obj = _stage2_trade_obj(entry_price=103.0, stop_loss_price=102.5)
+    result = validator.validate(
+        "stage2",
+        json.dumps(obj),
+        decision_stance="aggressive",
+        kline_frame=_frame(),
+    )
+    assert isinstance(result, ValidationError)
+    assert any("noise floor" in f for f in result.invalid_fields)
+    assert obj["decision"]["stop_loss_price"] == 102.5
