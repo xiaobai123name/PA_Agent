@@ -50,6 +50,15 @@ def _stage2_trade_obj(**decision_overrides) -> dict:
         "watch_points": [],
         "risk_assessment": "test",
         "invalidation_condition": "test",
+        "evidence_confluence": {
+            "pa": "supports",
+            "smc": "unavailable",
+            "volume_price": "unavailable",
+            "smc_refs": [],
+            "volume_refs": [],
+            "conflicts": [],
+            "impact": "none",
+        },
         "high_rr_review": {
             "status": "通过",
             "stop_loss_basis": "K2结构失效位外加缓冲",
@@ -628,6 +637,7 @@ def test_stop_distance_floor_falls_back_to_median_bar_range() -> None:
         for i in range(1, 9)
     )  # every bar range 2.0 → median 2.0 → floor 0.7
     frame = KlineFrame(
+        volume_meta=VolumeMeta(kind="traded", source="test", unit="test"),
         symbol="X",
         timeframe="5m",
         bars=bars,
