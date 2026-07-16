@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from pa_agent.records.pending_writer import PendingWriter
 
 from pa_agent.ai.deepseek_client import AIReply
+from pa_agent.data.datetime_ts import format_epoch_for_display
 from pa_agent.records.schema import AnalysisRecord, FollowupTurn
 from pa_agent.util.threading import CancelToken
 from pa_agent.util.timefmt import now_local_ms
@@ -44,6 +45,67 @@ def _derive_record_id(record: AnalysisRecord) -> str:
 def _strip_reasoning(message: dict) -> dict:
     """Return a copy of *message* without the ``reasoning_content`` key."""
     return {k: v for k, v in message.items() if k != "reasoning_content"}
+
+
+def _build_order_timing_anchor(record: AnalysisRecord) -> str:
+    """Build the immutable order-timing facts for follow-up prompts."""
+    kline_data = getattr(record, "kline_data", None) or []
+    if not kline_data:
+        return ""
+
+    original_k1 = next(
+        (bar for bar in kline_data if bar.get("seq") == 1),
+        kline_data[0],
+    )
+    ts_open = original_k1.get("ts_open")
+    if ts_open is None:
+        return ""
+
+    try:
+        k1_time = format_epoch_for_display(float(ts_open), short=False)
+    except (TypeError, ValueError, OverflowError):
+        k1_time = "未知"
+
+    stage2 = getattr(record, "stage2_decision", None) or {}
+    decision = stage2.get("decision") or {}
+    entry_bar = (stage2.get("bar_analysis") or {}).get("entry_bar") or {}
+
+    order_type = decision.get("order_type") or "未提供"
+    order_direction = decision.get("order_direction") or "未提供"
+    order_summary = f"{order_type} / {order_direction}"
+    for label, field in (
+        ("entry", "entry_price"),
+        ("TP1", "take_profit_price"),
+        ("TP2", "take_profit_price_2"),
+        ("SL", "stop_loss_price"),
+    ):
+        value = decision.get(field)
+        if value is not None:
+            order_summary += f" / {label}={value}"
+
+    status_parts: list[str] = []
+    if entry_bar.get("freshness"):
+        status_parts.append(f"freshness={entry_bar['freshness']}")
+    if entry_bar.get("strength"):
+        status_parts.append(f"strength={entry_bar['strength']}")
+    original_status = ", ".join(status_parts) or "未提供"
+
+    return (
+        "## 订单时序硬锚点（程序生成，必须严格遵守）\n"
+        f"- 原始分析记录：{_derive_record_id(record)}\n"
+        f"- 交易对象：{record.meta.symbol} / {record.meta.timeframe}\n"
+        "- 原始分析K1（固定身份，不随后续图表的K1编号变化）："
+        f"seq={original_k1.get('seq', 1)}，ts_open={ts_open}，时间={k1_time}，"
+        f"O={original_k1.get('open')}，H={original_k1.get('high')}，"
+        f"L={original_k1.get('low')}，C={original_k1.get('close')}\n"
+        "- 订单生成时点：上述原始分析K1收盘之后\n"
+        f"- 原始订单计划：{order_summary}\n"
+        f"- 原始入场状态：{original_status}\n"
+        "- 强制时序规则：原始分析K1及 ts_open 小于或等于该锚点的K线，"
+        "不得用于判定本订单已成交、已止盈或已止损。\n"
+        f"- 有效证据规则：只能使用 ts_open > {ts_open} 的后续K线或真实成交回报；"
+        "没有此类证据时，必须回答未确认成交/仍待确认，禁止推定已经盈利或亏损。"
+    )
 
 
 class FreeChatSession:
@@ -105,6 +167,10 @@ class FreeChatSession:
         # Derived record ID used as the JSONL sidecar basename.
         self._record_id: str = _derive_record_id(base_record)
 
+        # Immutable timing facts are repeated in every follow-up user prompt so
+        # a refreshed chart cannot redefine which candle was the analysis K1.
+        self._order_timing_anchor: str = _build_order_timing_anchor(base_record)
+
         # ── Pre-build stable prefix (cached for all turns in this session) ────
         # These three messages are byte-for-byte identical across every turn of
         # the same session, so they form a stable prefix that the API can cache.
@@ -157,6 +223,8 @@ class FreeChatSession:
                     "4) 不要编造数据；以用户消息附带的「当前图表K线数据」为准（与发送追问时屏幕上冻结的图表一致）。\n"
                     "5) K线棒型描述（上影线/下影线/实体大小/涨跌方向）必须以「K1数据·程序计算」字段中的数值为准，\n"
                     "   禁止凭记忆或猜测描述棒型特征——程序计算的 upper_wick/lower_wick/body 是唯一可信来源。\n"
+                    "6) 每轮消息中的「订单时序硬锚点」是程序生成的最高优先级时序事实；必须按其中规则区分原始分析K1与后续K线，\n"
+                    "   禁止使用原始分析K1或更早K线，倒推该K1收盘后才生成的订单已经成交、止盈或止损。\n"
                 ),
             }
         )
@@ -308,19 +376,23 @@ class FreeChatSession:
                     assistant_msg["reasoning_content"] = msg["reasoning_content"]
                 history_for_api.append(assistant_msg)
 
-        # New user message — prepend latest K-line snapshot if available
-        user_content = user_text
+        # New user message — prepend immutable timing anchor and latest K-lines.
+        user_parts: list[str] = []
+        if self._order_timing_anchor:
+            user_parts.append(self._order_timing_anchor)
         if self._kline_snapshot_fn is not None:
             try:
                 kline_table = self._kline_snapshot_fn()
                 if kline_table:
-                    user_content = (
+                    user_parts.append(
                         "## 当前图表K线数据（发送追问时已刷新并冻结图表，与屏幕一致）\n\n"
-                        f"{kline_table}\n\n"
-                        f"---\n\n{user_text}"
+                        f"{kline_table}"
                     )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("kline_snapshot_fn failed: %s", exc)
+
+        user_parts.append(user_text)
+        user_content = "\n\n---\n\n".join(user_parts)
 
         history_for_api.append({"role": "user", "content": user_content})
 
