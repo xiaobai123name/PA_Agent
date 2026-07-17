@@ -127,6 +127,7 @@ class _AnalysisWorker(QThread):
         cancel_token: Any,
         previous_record: Any = None,
         incremental_new_bar_count: int | None = None,
+        htf_text_provider: Any = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -135,6 +136,7 @@ class _AnalysisWorker(QThread):
         self._cancel_token = cancel_token
         self._previous_record = previous_record
         self._incremental_new_bar_count = incremental_new_bar_count
+        self._htf_text_provider = htf_text_provider
 
     def run(self) -> None:
         from pa_agent.util.threading import OrchestratorEvent
@@ -178,6 +180,19 @@ class _AnalysisWorker(QThread):
         def on_stage2_files(files: list[str]) -> None:
             self.stage2_files_ready.emit(files)
 
+        htf_text = ""
+        is_incremental = (
+            self._previous_record is not None
+            and self._incremental_new_bar_count is not None
+        )
+        if self._htf_text_provider is not None and not is_incremental:
+            try:
+                self.status_update.emit("拉取高周期背景…")
+                htf_text = self._htf_text_provider() or ""
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("HTF text provider failed: %s", exc)
+                htf_text = ""
+
         try:
             record = self._orchestrator.submit(
                 self._frame,
@@ -191,6 +206,7 @@ class _AnalysisWorker(QThread):
                 on_stage2_files=on_stage2_files,
                 previous_record=self._previous_record,
                 incremental_new_bar_count=self._incremental_new_bar_count,
+                htf_text=htf_text,
             )
             decision = record.stage2_decision or {}
         except Exception as exc:  # noqa: BLE001
@@ -2984,12 +3000,31 @@ class MainWindow(QMainWindow):
         worker_id = object()
         self._analysis_worker_id = worker_id
 
+        htf_text_provider = None
+        _htf_src = getattr(self._ctx, "data_source", None)
+        _htf_general = getattr(getattr(self._ctx, "settings", None), "general", None)
+        _htf_symbol = getattr(frame, "symbol", "") or ""
+        _htf_tf = getattr(frame, "timeframe", "") or ""
+        if _htf_src is not None and _htf_symbol and _htf_tf:
+            from pa_agent.ai.htf_context import fetch_htf_text
+
+            _htf_cancel = self._cancel_token
+
+            def _htf_provider() -> str:
+                return fetch_htf_text(
+                    _htf_src, _htf_symbol, _htf_tf, _htf_general,
+                    cancel_token=_htf_cancel,
+                )
+
+            htf_text_provider = _htf_provider
+
         self._worker = _AnalysisWorker(
             orchestrator=orchestrator,
             frame=frame,
             cancel_token=self._cancel_token,
             previous_record=previous_record,
             incremental_new_bar_count=incremental_new_bar_count,
+            htf_text_provider=htf_text_provider,
             parent=None,
         )
         def _on_worker_finished(decision: dict) -> None:

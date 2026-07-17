@@ -1066,10 +1066,18 @@ class PromptAssembler:
 
     # ── Stage 1 ───────────────────────────────────────────────────────────────
 
-    def build_stage1(self, frame: KlineFrame, *, analysis_mode: str = "original") -> list[dict]:
+    def build_stage1(
+        self,
+        frame: KlineFrame,
+        *,
+        analysis_mode: str = "original",
+        htf_text: str = "",
+    ) -> list[dict]:
         """Build the message list for Stage 1 (market diagnosis)."""
         system_content = self._build_stage1_system_prompt()
         user_content = self._build_stage1_user_prompt(frame, analysis_mode=analysis_mode)
+        if htf_text:
+            user_content = htf_text.rstrip() + "\n\n" + user_content
 
         return [
             {"role": "system", "content": system_content},

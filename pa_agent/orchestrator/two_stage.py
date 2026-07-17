@@ -197,6 +197,7 @@ def _emit_buffered_stream(
 def _build_empty_record(
     frame: KlineFrame,
     settings: Optional["Settings"],
+    htf_text: str = "",
 ) -> AnalysisRecord:
     """Build a partial AnalysisRecord with meta populated from the frame."""
     ts_ms = int(getattr(frame, "snapshot_ts_local_ms", 0) or now_local_ms())
@@ -245,7 +246,7 @@ def _build_empty_record(
     return AnalysisRecord(
         meta=meta,
         kline_data=kline_data,
-        htf_text="",
+        htf_text=htf_text,
         stage1_messages=[],
         stage1_response=None,
         stage1_diagnosis=None,
@@ -356,6 +357,7 @@ class TwoStageOrchestrator:
         incremental_new_bar_count: int | None = None,
         stage2_extra_task_context: str = "",
         force_stage2_on_gate_wait: bool = False,
+        htf_text: str = "",
     ) -> AnalysisRecord:
         """Run the two-stage analysis pipeline and return an AnalysisRecord.
 
@@ -390,7 +392,7 @@ class TwoStageOrchestrator:
             previous_record = None
             incremental_new_bar_count = None
 
-        record = _build_empty_record(frame, self._settings)
+        record = _build_empty_record(frame, self._settings, htf_text=htf_text)
 
         # ── Step 2: Pre-Stage-1 cancel check ─────────────────────────────────
         if cancel_token.is_set():
@@ -434,7 +436,9 @@ class TwoStageOrchestrator:
                 provider_settings=getattr(self._settings, "provider", None),
             )
         else:
-            messages_s1 = self._assembler.build_stage1(frame, analysis_mode=analysis_mode)
+            messages_s1 = self._assembler.build_stage1(
+                frame, analysis_mode=analysis_mode, htf_text=htf_text
+            )
 
         # ── Step 5: Call AI for Stage 1 ───────────────────────────────────────
         logger.debug("\n" + "="*80)

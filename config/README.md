@@ -67,6 +67,8 @@
 | `general.decision_flow_default_zoom_pct` | int | `600` | 决策树可视化默认缩放百分比（≥10） |
 | `general.stream_pane_font_pt` | int | `11` | 「实时」页等宽字体字号（pt，8–28） |
 | `general.chart_seq_label_font_pt` | int | `7` | K 线图上序号标签的字号（pt，6–24） |
+| `general.htf_context_enabled` | bool | `true` | 高周期背景注入：分析前额外拉取一帧高周期 K 线（跳一级映射，如 15m→4h、1h→1d），程序计算摘要注入阶段一。取数失败自动退化为无高周期背景 |
+| `general.htf_timeframe_map` | dict | `{}` | 高周期映射覆盖（当前周期→高周期），如 `{"15m": "1h"}`；未覆盖的周期用内置默认映射 |
 
 ### prompt — Prompt 组装调优
 

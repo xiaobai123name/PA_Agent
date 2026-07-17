@@ -170,3 +170,20 @@ class DataSource(ABC):
 
         Raises DataSourceTransientError on recoverable network issues.
         """
+
+    def fetch_frame_once(
+        self,
+        symbol: str,
+        timeframe: str,
+        n: int,
+        *,
+        cancel_token: object | None = None,
+        timeout_s: float | None = None,
+    ) -> list[KlineBar]:
+        """One-shot bar fetch independent of the live subscription (HTF context).
+
+        Unlike ``latest_snapshot`` this must not disturb the subscribed
+        symbol/timeframe state. Sources without a safe out-of-subscription
+        fetch path return [] (callers degrade gracefully to no HTF context).
+        """
+        return []

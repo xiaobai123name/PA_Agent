@@ -814,3 +814,16 @@ def test_unpredictable_previous_prediction_renders_note(assembler: PromptAssembl
 
     user = messages[-1]["content"]  # Stage 2 user prompt (last turn)
     assert "不可预测" in user
+
+
+def test_stage1_injects_external_htf_block(assembler: PromptAssembler):
+    """htf_text is prepended to the stage-1 user prompt; absent when empty."""
+    frame = _make_frame()
+    block = "## 外部高周期背景（4h，程序按真实高周期 K 线计算）\n- 测试行"
+    messages = assembler.build_stage1(frame, htf_text=block)
+    user = messages[1]["content"]
+    assert user.startswith("## 外部高周期背景（4h")
+    assert "- 测试行" in user
+
+    plain_user = assembler.build_stage1(frame)[1]["content"]
+    assert "外部高周期背景" not in plain_user

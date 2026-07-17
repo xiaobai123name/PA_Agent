@@ -348,6 +348,33 @@ class AkShareSource(DataSource):
 
         return _rows_to_kline_bars(rows_newest, n)
 
+    def fetch_frame_once(
+        self,
+        symbol: str,
+        timeframe: str,
+        n: int,
+        *,
+        cancel_token: object | None = None,
+        timeout_s: float | None = None,
+    ) -> list[KlineBar]:
+        """One-shot stateless history fetch (HTF context)."""
+        if not self._connected or not symbol or timeframe not in _SUPPORTED_TIMEFRAMES:
+            return []
+        fetch_n = max(n + 5, 30)
+        try:
+            rows_asc = self._fetch_history(symbol, timeframe, fetch_n)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "AkShare fetch_frame_once failed for %s %s: %s", symbol, timeframe, exc
+            )
+            return []
+        if not rows_asc:
+            return []
+        rows_newest = list(reversed(rows_asc[-fetch_n:]))
+        for i, row in enumerate(rows_newest):
+            row["closed"] = not (i == 0 and _ashare_session_open())
+        return _rows_to_kline_bars(rows_newest, n)
+
     # ── Fetch ─────────────────────────────────────────────────────────────────
 
     @staticmethod
