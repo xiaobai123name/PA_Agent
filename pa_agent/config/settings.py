@@ -94,6 +94,10 @@ class GeneralSettings(BaseModel):
     decision_confidence_threshold: int = Field(default=40, ge=0, le=100)
     #: 开启下根K线预期功能；关闭时不向模型请求该预测，节省 token
     enable_next_bar_prediction: bool = False
+    #: 高周期背景注入：分析前额外拉取一帧高周期 K 线，程序计算摘要后注入阶段一 prompt
+    htf_context_enabled: bool = True
+    #: 高周期映射覆盖（当前周期→高周期），如 {"15m": "1h"}；未覆盖的周期用内置默认（跳一级：15m→4h、1h→1d）
+    htf_timeframe_map: dict[str, str] = Field(default_factory=dict)
     #: 同一结构位 entry 相差≤3跳时，禁止反向新方案的冷却 K 线根数（已收盘）
     structure_flip_cooldown_bars: int = Field(default=3, ge=1, le=50)
     #: ExecutionResolver 只接受此年龄以内的形成中 K 线报价。

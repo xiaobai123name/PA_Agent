@@ -144,6 +144,7 @@ class TradingViewSource(DataSource):
         self._symbol: str = ""
         self._timeframe: str = ""
         self._exchange: str = ""
+        self._resolved_exchange: str = ""
         # Callback for status updates during auto-probe: fn(symbol, exchange, label)
         self.on_probe_status = None
 
@@ -395,47 +396,85 @@ class TradingViewSource(DataSource):
             )
             raise DataSourceEmptyError(msg)
 
-        bars: list[KlineBar] = []
-        for i, row in enumerate(reversed(rows)):
-            ts_ms = _row_ts_ms(row)
-            bar = KlineBar(
-                seq=i + 1,
-                ts_open=ts_ms,
-                open=float(row["open"]),
-                high=float(row["high"]),
-                low=float(row["low"]),
-                close=float(row["close"]),
-                volume=float(row.get("volume", 0.0)),
-                closed=True,
+        self._resolved_exchange = exchange
+
+        return _tv_rows_to_bars(rows, self._timeframe, n)
+
+    def fetch_frame_once(
+        self,
+        symbol: str,
+        timeframe: str,
+        n: int,
+        *,
+        cancel_token: object | None = None,
+        timeout_s: float | None = None,
+    ) -> list[KlineBar]:
+        """One-shot fetch reusing the live subscription's resolved exchange."""
+        if not self._connected or self._supervisor is None:
+            return []
+        if timeframe not in _TF_MAP or not symbol:
+            return []
+        req_exchange = self._resolved_exchange or self._exchange
+        if is_tv_exchange_auto(req_exchange):
+            return []
+        try:
+            exchange, fetch_symbol = resolve_tv_fetch_pair(req_exchange, symbol)
+            rows = self._fetch_hist_with_retry(
+                symbol=fetch_symbol,
+                exchange=exchange,
+                interval_name=_TF_MAP[timeframe],
+                n_bars=n + 1,
+                cancel_token=cancel_token,
+                timeout_s=_TV_HARD_TIMEOUT_S if timeout_s is None else float(timeout_s),
             )
-            if i == 0:
-                # Determine whether the newest bar is still forming.
-                # We must NOT pass bar.closed=True into is_bar_still_forming because
-                # that function short-circuits on bar.closed and would always return
-                # False — defeating the purpose of the check entirely.
-                # Instead, use seconds_until_bar_closes which only looks at the
-                # timestamp, and is robust to constant broker-time offsets.
-                from pa_agent.data.bar_close_wait import seconds_until_bar_closes
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "TradingView fetch_frame_once failed for %s %s: %s",
+                symbol, timeframe, exc,
+            )
+            return []
+        if not rows:
+            return []
+        return _tv_rows_to_bars(rows, timeframe, n)
 
-                secs_left = seconds_until_bar_closes(
-                    ts_ms, self._timeframe, now_ms=None
-                )
-                still_forming = secs_left is not None and secs_left > 0
-                bar = KlineBar(
-                    seq=bar.seq,
-                    ts_open=bar.ts_open,
-                    open=bar.open,
-                    high=bar.high,
-                    low=bar.low,
-                    close=bar.close,
-                    volume=bar.volume,
-                    closed=not still_forming,
-                )
-            bars.append(normalize_kline_bar(bar))
-            if len(bars) >= n:
-                break
 
-        return bars
+def _tv_rows_to_bars(rows: Any, timeframe: str, n: int) -> list[KlineBar]:
+    """Convert tvDatafeed rows (oldest-first) to newest-first KlineBar list."""
+    bars: list[KlineBar] = []
+    for i, row in enumerate(reversed(rows)):
+        ts_ms = _row_ts_ms(row)
+        bar = KlineBar(
+            seq=i + 1,
+            ts_open=ts_ms,
+            open=float(row["open"]),
+            high=float(row["high"]),
+            low=float(row["low"]),
+            close=float(row["close"]),
+            volume=float(row.get("volume", 0.0)),
+            closed=True,
+        )
+        if i == 0:
+            # seconds_until_bar_closes only looks at the timestamp, so it is
+            # robust to constant broker-time offsets (see latest_snapshot note).
+            from pa_agent.data.bar_close_wait import seconds_until_bar_closes
+
+            secs_left = seconds_until_bar_closes(ts_ms, timeframe, now_ms=None)
+            still_forming = secs_left is not None and secs_left > 0
+            bar = KlineBar(
+                seq=bar.seq,
+                ts_open=bar.ts_open,
+                open=bar.open,
+                high=bar.high,
+                low=bar.low,
+                close=bar.close,
+                volume=bar.volume,
+                closed=not still_forming,
+            )
+        bars.append(normalize_kline_bar(bar))
+        if len(bars) >= n:
+            break
+
+    return bars
 
 
 def _row_ts_ms(row: object) -> int:

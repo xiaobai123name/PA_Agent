@@ -28,7 +28,9 @@
     "stream_pane_font_pt": 11,
     "chart_seq_label_font_pt": 7,
     "auto_resume_chart_after_analysis": true,
-    "enable_next_bar_prediction": false
+    "enable_next_bar_prediction": false,
+    "htf_context_enabled": true,
+    "htf_timeframe_map": {}
   },
   "prompt": {
     "stage2_load_full_strategy_library": false,

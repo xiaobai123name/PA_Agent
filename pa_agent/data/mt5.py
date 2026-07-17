@@ -196,13 +196,33 @@ class MT5Source(DataSource):
             raise DataSourceTransientError("Not connected — call connect() first")
         if not self._symbol or not self._timeframe:
             raise DataSourceTransientError("Not subscribed — call subscribe() first")
+        return self._fetch_bars_once(self._symbol, self._timeframe, n)
 
+    def fetch_frame_once(
+        self,
+        symbol: str,
+        timeframe: str,
+        n: int,
+        *,
+        cancel_token: object | None = None,
+        timeout_s: float | None = None,
+    ) -> list[KlineBar]:
+        """One-shot fetch via copy_rates_from_pos; stateless w.r.t. subscription."""
+        if not self._connected or timeframe not in _TF_MAP or not symbol:
+            return []
+        try:
+            return self._fetch_bars_once(symbol, timeframe, n)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("MT5 fetch_frame_once failed for %s %s: %s", symbol, timeframe, exc)
+            return []
+
+    def _fetch_bars_once(self, symbol: str, timeframe: str, n: int) -> list[KlineBar]:
         try:
             import MetaTrader5 as mt5  # type: ignore[import]
         except ImportError as exc:
             raise DataSourceTransientError("MetaTrader5 not installed") from exc
 
-        tf_name = _TF_MAP[self._timeframe]
+        tf_name = _TF_MAP[timeframe]
         try:
             tf_const = getattr(mt5, tf_name)
         except AttributeError as exc:
@@ -212,17 +232,17 @@ class MT5Source(DataSource):
 
         # Ensure the symbol is selected/subscribed in MT5 for real-time data
         try:
-            mt5.symbol_select(self._symbol, True)
+            mt5.symbol_select(symbol, True)
         except Exception:  # noqa: BLE001
             pass  # Non-fatal; proceed with fetch
 
         # Fetch n+1 bars starting from position 0 (current forming bar)
-        rates = mt5.copy_rates_from_pos(self._symbol, tf_const, 0, n + 1)
+        rates = mt5.copy_rates_from_pos(symbol, tf_const, 0, n + 1)
 
         if rates is None or len(rates) == 0:
             error = mt5.last_error()
             raise DataSourceTransientError(
-                f"MT5 copy_rates_from_pos failed for {self._symbol} {self._timeframe}: "
+                f"MT5 copy_rates_from_pos failed for {symbol} {timeframe}: "
                 f"{error}"
             )
 
